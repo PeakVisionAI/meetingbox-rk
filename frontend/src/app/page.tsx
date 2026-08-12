@@ -21,6 +21,7 @@ import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { FileText, FolderOpen, Settings, Sparkles, ArrowUpRight } from 'lucide-react';
 
 export default function Home() {
   // Local page state (not moved to contexts)
@@ -30,6 +31,7 @@ export default function Home() {
 
   // Use contexts for state management
   const { meetingTitle } = useTranscripts();
+  const { transcripts } = useTranscripts();
   const { transcriptModelConfig, selectedDevices } = useConfig();
   const recordingState = useRecordingState();
 
@@ -213,11 +215,48 @@ export default function Home() {
         onLoadPreview={loadMeetingTranscripts}
       />
       <div className="flex flex-1 overflow-hidden">
-        <TranscriptPanel
-          isProcessingStop={isProcessingStop}
-          isStopping={isStopping}
-          showModal={showModal}
-        />
+        <div className="hyos-home-stage">
+          {!recordingState.isRecording && transcripts.length === 0 && !isProcessingStop ? (
+            <section className="hyos-workbench" aria-label="会议工作台">
+              <div className="hyos-welcome">
+                <div>
+                  <span className="hyos-eyebrow">本机智能会议空间</span>
+                  <h1>让每一次交流，都留下清晰答案</h1>
+                  <p>在本机完成录音、实时转写与会议整理，数据始终留在你的设备上。</p>
+                </div>
+                <div className="hyos-orb" aria-hidden="true"><Sparkles size={32} /></div>
+              </div>
+              <div className="hyos-launch-grid">
+                <button className="hyos-launch-card primary" onClick={() => window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'))}>
+                  <span className="hyos-launch-icon"><span>▶</span></span>
+                  <span><b>快速会议</b><small>开始一场新的会议记录</small></span>
+                  <ArrowUpRight size={18} />
+                </button>
+                <button className="hyos-launch-card" onClick={() => router.push('/meeting-details')}>
+                  <span className="hyos-launch-icon"><FolderOpen size={21} /></span>
+                  <span><b>会议文件</b><small>查看转写与会议总结</small></span>
+                  <ArrowUpRight size={18} />
+                </button>
+                <button className="hyos-launch-card" onClick={() => router.push('/settings')}>
+                  <span className="hyos-launch-icon"><Settings size={21} /></span>
+                  <span><b>设备与设置</b><small>管理模型、音频和偏好</small></span>
+                  <ArrowUpRight size={18} />
+                </button>
+              </div>
+              <div className="hyos-empty-work">
+                <div className="hyos-empty-icon"><FileText size={22} /></div>
+                <div><b>尚无本次会议记录</b><span>开始快速会议或从左侧导入一段音频。</span></div>
+              </div>
+            </section>
+          ) : null}
+          <div className={`hyos-transcript-stage ${!recordingState.isRecording && transcripts.length === 0 && !isProcessingStop ? 'hyos-transcript-hidden' : ''}`}>
+            <TranscriptPanel
+              isProcessingStop={isProcessingStop}
+              isStopping={isStopping}
+              showModal={showModal}
+            />
+          </div>
+        </div>
 
         {/* Recording controls - only show when permissions are granted or already recording and not showing status messages */}
         {(hasMicrophone || isRecording) &&

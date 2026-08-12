@@ -215,7 +215,7 @@ export default function RootLayout({
                               <DownloadProgressToastProvider />
 
                               {/* RK distributions skip bundled-model onboarding. */}
-                              <div className="flex">
+                              <div className="flex min-h-screen bg-[#f3f6fa]">
                                 <Sidebar />
                                 <MainContent>{children}</MainContent>
                               </div>

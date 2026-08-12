@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --hyos-navy: #082b53;
+  --hyos-blue: #1456a0;
+  --hyos-blue-soft: #edf4ff;
+  --hyos-page: #f3f6fa;
+  --hyos-border: #dce4ef;
+  --hyos-text: #172b46;
+  --hyos-muted: #6a7b90;
+  --hyos-shadow: 0 14px 34px rgba(27, 58, 95, 0.08);
+}
+
 @keyframes vibrate {
   0% {
     transform: translate(0);
@@ -140,10 +151,61 @@
 
   /* html, */
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background: var(--hyos-page);
     overflow: hidden;
     height: 100%;
+    color: var(--hyos-text);
+    font-family: var(--font-source-sans-3), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
+
+  button, input { font-family: inherit; }
+
+  .hyos-main { flex: 1; min-width: 0; min-height: 100vh; width: auto; background: var(--hyos-page); }
+  .hyos-page-content { height: calc(100vh - 72px); overflow: auto; padding: 28px clamp(24px, 4vw, 64px) 48px; }
+  .hyos-header { height: 72px; display: flex; align-items: center; gap: 36px; padding: 0 clamp(24px, 4vw, 64px); background: rgba(255,255,255,.94); border-bottom: 1px solid var(--hyos-border); position: sticky; top: 0; z-index: 20; }
+  .hyos-brand { border: 0; background: transparent; display: inline-flex; align-items: baseline; gap: 8px; color: var(--hyos-text); cursor: pointer; font-size: 17px; font-weight: 700; letter-spacing: -.02em; white-space: nowrap; }
+  .hyos-brand i { color: #94a3b8; font-style: normal; font-weight: 500; }
+  .hyos-brand b { color: var(--hyos-blue); letter-spacing: .06em; font-size: 13px; }
+  .hyos-nav { display: flex; align-items: center; gap: 6px; height: 100%; }
+  .hyos-nav button { border: 1px solid transparent; background: transparent; color: var(--hyos-muted); display: inline-flex; gap: 8px; align-items: center; height: 38px; padding: 0 14px; border-radius: 9px; cursor: pointer; font-size: 14px; font-weight: 600; transition: .18s ease; }
+  .hyos-nav button:hover, .hyos-nav button.active { color: var(--hyos-blue); background: var(--hyos-blue-soft); border-color: #c5d9ff; }
+  .hyos-nav button:disabled { opacity: .6; cursor: not-allowed; }
+  .hyos-service-pill { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid #cbe8d5; border-radius: 999px; background: #f1fbf4; color: #247844; font-size: 12px; font-weight: 600; }
+  .hyos-service-pill i { width: 7px; height: 7px; border-radius: 50%; background: #39a95d; box-shadow: 0 0 0 3px rgba(57,169,93,.12); }
+  .hyos-home-stage { width: 100%; min-height: 100%; display: flex; flex-direction: column; }
+  .hyos-workbench { width: min(1120px, 100%); margin: 0 auto; }
+  .hyos-welcome { min-height: 190px; padding: 34px 38px; border: 1px solid var(--hyos-border); border-radius: 18px; background: linear-gradient(112deg, #fff 0%, #f8fbff 100%); box-shadow: var(--hyos-shadow); display: flex; align-items: center; justify-content: space-between; overflow: hidden; position: relative; }
+  .hyos-welcome::after { content: ""; position: absolute; width: 260px; height: 260px; right: 65px; top: -125px; border-radius: 50%; background: rgba(197,217,255,.22); }
+  .hyos-eyebrow { color: var(--hyos-blue); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .hyos-welcome h1 { margin: 12px 0 8px; color: var(--hyos-navy); font-size: clamp(25px, 3vw, 38px); line-height: 1.18; letter-spacing: -.035em; }
+  .hyos-welcome p { margin: 0; color: var(--hyos-muted); font-size: 15px; }
+  .hyos-orb { width: 84px; height: 84px; display: grid; place-items: center; border-radius: 24px; color: #fff; background: var(--hyos-navy); box-shadow: 0 18px 30px rgba(8,43,83,.2); transform: rotate(8deg); z-index: 1; }
+  .hyos-launch-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 15px; margin-top: 22px; }
+  .hyos-launch-card { border: 1px solid var(--hyos-border); border-radius: 14px; background: #fff; color: var(--hyos-text); padding: 19px; display: flex; align-items: center; gap: 13px; text-align: left; cursor: pointer; box-shadow: 0 5px 16px rgba(27,58,95,.04); transition: .18s ease; }
+  .hyos-launch-card:hover { transform: translateY(-2px); border-color: #9dbdec; box-shadow: var(--hyos-shadow); }
+  .hyos-launch-card.primary { background: var(--hyos-navy); color: #fff; border-color: var(--hyos-navy); }
+  .hyos-launch-card > span:nth-child(2) { flex: 1; display: grid; gap: 4px; }
+  .hyos-launch-card b { font-size: 15px; }
+  .hyos-launch-card small { color: var(--hyos-muted); font-size: 12px; }
+  .hyos-launch-card.primary small { color: rgba(255,255,255,.7); }
+  .hyos-launch-card > svg { opacity: .65; }
+  .hyos-launch-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 38px; border: 1px solid #c5d9ff; border-radius: 11px; color: var(--hyos-blue); background: var(--hyos-blue-soft); }
+  .hyos-launch-card.primary .hyos-launch-icon { color: #fff; background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.24); }
+  .hyos-empty-work { margin-top: 22px; padding: 26px; border: 1px dashed #c4d1e2; border-radius: 14px; background: rgba(255,255,255,.58); display: flex; align-items: center; justify-content: center; gap: 13px; text-align: left; }
+  .hyos-empty-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; color: var(--hyos-blue); background: var(--hyos-blue-soft); }
+  .hyos-empty-work div:last-child { display: grid; gap: 3px; }
+  .hyos-empty-work b { color: var(--hyos-text); font-size: 14px; }
+  .hyos-empty-work span { color: var(--hyos-muted); font-size: 12px; }
+  .hyos-transcript-stage { width: min(1120px, 100%); margin: 0 auto; flex: 1; min-height: 0; }
+  .hyos-transcript-hidden { display: none; }
+  .hyos-transcript-stage > div { border: 1px solid var(--hyos-border); border-radius: 16px; box-shadow: var(--hyos-shadow); }
+
+  .fixed.top-0.left-0.z-40 > div { background: #fff; border-right-color: var(--hyos-border); box-shadow: 8px 0 24px rgba(27,58,95,.04); }
+  .fixed.top-0.left-0.z-40 .bg-red-500 { background: var(--hyos-navy); }
+  .fixed.top-0.left-0.z-40 .bg-red-500:hover { background: var(--hyos-blue); }
+  .fixed.top-0.left-0.z-40 .bg-blue-100 { background: var(--hyos-blue-soft); }
+  .fixed.top-0.left-0.z-40 .border-t { border-color: var(--hyos-border); }
 
   /* Make the window draggable */
   .titlebar {
@@ -178,6 +240,19 @@
   .custom-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: #d1d5db transparent;
+  }
+
+  @media (max-width: 860px) {
+    .hyos-header { gap: 16px; padding-inline: 18px; }
+    .hyos-brand span, .hyos-brand i { display: none; }
+    .hyos-nav { gap: 0; }
+    .hyos-nav button { padding-inline: 9px; }
+    .hyos-nav button { font-size: 0; }
+    .hyos-nav button svg { width: 18px; height: 18px; }
+    .hyos-page-content { padding: 18px 16px 32px; }
+    .hyos-welcome { padding: 26px 22px; }
+    .hyos-orb { width: 62px; height: 62px; border-radius: 18px; }
+    .hyos-launch-grid { grid-template-columns: 1fr; }
   }
 
   /* BlockNote Editor - Override fixed dimensions for responsive layout */
