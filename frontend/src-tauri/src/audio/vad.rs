@@ -23,7 +23,6 @@ pub struct ContinuousVadProcessor {
     current_speech: Vec<f32>,
     in_speech: bool,
     processed_samples: usize,
-    speech_start_sample: usize,
     // State tracking for smart logging
     last_logged_state: bool,
 }
@@ -76,10 +75,20 @@ impl ContinuousVadProcessor {
             current_speech: Vec::new(),
             in_speech: false,
             processed_samples: 0,
-            speech_start_sample: 0,
-            // Initialize state tracking
             last_logged_state: false,
         })
+    }
+
+    pub fn is_holding_speech(&self) -> bool {
+        self.in_speech || !self.current_speech.is_empty()
+    }
+
+    fn times_for_span(&self, sample_count: usize, end_samples: usize) -> (f64, f64) {
+        let end_samples = end_samples.max(sample_count);
+        let start_samples = end_samples.saturating_sub(sample_count);
+        let start_ms = start_samples as f64 / 16.0;
+        let end_ms = end_samples as f64 / 16.0;
+        (start_ms, end_ms.max(start_ms))
     }
 
     /// Process incoming audio samples and return any complete speech segments
@@ -182,9 +191,10 @@ impl ContinuousVadProcessor {
 
         // Force end any ongoing speech
         if self.in_speech && !self.current_speech.is_empty() {
-            // processed_samples and speech_start_sample always count 16kHz samples (post-resampling)
-            let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
-            let end_ms = (self.processed_samples as f64 / 16000.0) * 1000.0;
+            let (start_ms, end_ms) = self.times_for_span(
+                self.current_speech.len(),
+                self.processed_samples,
+            );
 
             debug!("VAD flush: Force-ending speech - start={}ms, end={}ms, duration={}ms, samples={}",
                   start_ms, end_ms, end_ms - start_ms, self.current_speech.len());
@@ -236,8 +246,6 @@ impl ContinuousVadProcessor {
                         self.last_logged_state = true;
                     }
                     self.in_speech = true;
-                    // Use 16000 (VAD processing rate) since processed_samples counts 16kHz samples
-                    self.speech_start_sample = self.processed_samples + (timestamp_ms * 16000 / 1000);
                     self.current_speech.clear();
                 }
                 VadTransition::SpeechEnd { start_timestamp_ms, end_timestamp_ms, samples } => {
@@ -256,15 +264,19 @@ impl ContinuousVadProcessor {
                     };
 
                     if !speech_samples.is_empty() {
+                        let (start_ms, end_ms) = self.times_for_span(
+                            speech_samples.len(),
+                            self.processed_samples + chunk.len(),
+                        );
                         let segment = SpeechSegment {
                             samples: speech_samples,
-                            start_timestamp_ms: start_timestamp_ms as f64,
-                            end_timestamp_ms: end_timestamp_ms as f64,
+                            start_timestamp_ms: start_ms,
+                            end_timestamp_ms: end_ms,
                             confidence: 0.9, // VAD confidence
                         };
 
                         info!("VAD: Completed speech segment: {:.1}ms duration, {} samples",
-                              end_timestamp_ms - start_timestamp_ms, segment.samples.len());
+                              end_ms - start_ms, segment.samples.len());
 
                         self.speech_segments.push_back(segment);
                     }

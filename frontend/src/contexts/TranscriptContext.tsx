@@ -7,6 +7,8 @@ import { useRecordingState } from './RecordingStateContext';
 import { transcriptService } from '@/services/transcriptService';
 import { recordingService } from '@/services/recordingService';
 import { indexedDBService } from '@/services/indexedDBService';
+import { uiText } from '@/lib/uiText';
+import { copyText } from '@/lib/clipboard';
 
 interface TranscriptContextType {
   transcripts: Transcript[];
@@ -24,9 +26,25 @@ interface TranscriptContextType {
 
 const TranscriptContext = createContext<TranscriptContextType | undefined>(undefined);
 
+function compareTranscripts(
+  a: { audio_start_time?: number; chunk_start_time?: number; sequence_id?: number },
+  b: { audio_start_time?: number; chunk_start_time?: number; sequence_id?: number },
+): number {
+  const timeOf = (item: { audio_start_time?: number; chunk_start_time?: number }) =>
+    item.audio_start_time ?? item.chunk_start_time ?? 0;
+  const ta = timeOf(a);
+  const tb = timeOf(b);
+  const aValid = ta > 0.05;
+  const bValid = tb > 0.05;
+  if (aValid && bValid && Math.abs(ta - tb) > 0.05) {
+    return ta - tb;
+  }
+  return (a.sequence_id || 0) - (b.sequence_id || 0);
+}
+
 export function TranscriptProvider({ children }: { children: ReactNode }) {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [meetingTitle, setMeetingTitle] = useState('+ New Call');
+  const [meetingTitle, setMeetingTitle] = useState(uiText.newCall);
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
 
   // Recording state context - provides backend-synced state
@@ -229,11 +247,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
       // Sort both stale and recent transcripts by chunk_start_time, then by sequence_id
       const sortTranscripts = (transcripts: Transcript[]) => {
-        return transcripts.sort((a, b) => {
-          const chunkTimeDiff = (a.chunk_start_time || 0) - (b.chunk_start_time || 0);
-          if (chunkTimeDiff !== 0) return chunkTimeDiff;
-          return (a.sequence_id || 0) - (b.sequence_id || 0);
-        });
+        return transcripts.sort(compareTranscripts);
       };
 
       const sortedStaleTranscripts = sortTranscripts(staleTranscripts);
@@ -263,12 +277,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
           // Merge with existing transcripts, maintaining chronological order
           const combined = [...prev, ...uniqueNewTranscripts];
 
-          // Sort by chunk_start_time first, then by sequence_id
-          return combined.sort((a, b) => {
-            const chunkTimeDiff = (a.chunk_start_time || 0) - (b.chunk_start_time || 0);
-            if (chunkTimeDiff !== 0) return chunkTimeDiff;
-            return (a.sequence_id || 0) - (b.sequence_id || 0);
-          });
+          return combined.sort(compareTranscripts);
         });
 
         // Log the processing summary
@@ -440,7 +449,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
       // Add new transcript and sort by sequence_id to maintain order
       const updated = [...prev, newTranscript];
-      const sorted = updated.sort((a, b) => (a.sequence_id || 0) - (b.sequence_id || 0));
+      const sorted = updated.sort(compareTranscripts);
 
       console.log('✅ Added new transcript. New count:', sorted.length);
       console.log('📝 Latest transcript:', {
@@ -455,7 +464,6 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
   // Copy transcript to clipboard with recording-relative timestamps
   const copyTranscript = useCallback(() => {
-    // Format timestamps as recording-relative [MM:SS] instead of wall-clock time
     const formatTime = (seconds: number | undefined): string => {
       if (seconds === undefined) return '[--:--]';
       const totalSecs = Math.floor(seconds);
@@ -464,12 +472,21 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       return `[${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
     };
 
+    if (!transcripts.length) {
+      toast.error(uiText.noTranscriptToCopy);
+      return;
+    }
+
     const fullTranscript = transcripts
       .map(t => `${formatTime(t.audio_start_time)} ${t.text}`)
       .join('\n');
-    navigator.clipboard.writeText(fullTranscript);
 
-    toast.success("Transcript copied to clipboard");
+    void copyText(fullTranscript)
+      .then(() => toast.success(uiText.transcriptCopied))
+      .catch((error) => {
+        console.error('Failed to copy transcript:', error);
+        toast.error(uiText.copyFailed, { description: uiText.copyFailedHint });
+      });
   }, [transcripts]);
 
   // Force flush buffer (for final transcript processing)

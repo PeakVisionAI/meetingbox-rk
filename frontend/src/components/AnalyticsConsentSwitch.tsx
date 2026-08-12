@@ -7,6 +7,8 @@ import { load } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
 import { Analytics } from '@/lib/analytics';
 import AnalyticsDataModal from './AnalyticsDataModal';
+import { uiText } from '@/lib/uiText';
+import { copyText } from '@/lib/clipboard';
 
 const ANALYTICS_DEFAULT_OFF_MIGRATION_KEY = 'analyticsDefaultOffMigrationV1';
 
@@ -39,7 +41,7 @@ export default function AnalyticsConsentSwitch() {
     if (!userId) return;
 
     try {
-      await navigator.clipboard.writeText(userId);
+      await copyText(userId);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
 
@@ -157,17 +159,17 @@ export default function AnalyticsConsentSwitch() {
     <>
       <div className="space-y-4">
         <div>
-          <h3 className="text-base font-semibold text-gray-800 mb-2">Usage Analytics</h3>
+          <h3 className="text-base font-semibold text-gray-800 mb-2">{uiText.usageAnalytics}</h3>
           <p className="text-sm text-gray-600 mb-4">
-            Usage analytics is off by default. You can turn it on to share anonymous product and performance data; no personal content is collected.
+            {uiText.usageAnalyticsHint}
           </p>
         </div>
 
         <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div>
-            <h4 className="font-semibold text-gray-800">Enable Analytics</h4>
+            <h4 className="font-semibold text-gray-800">{uiText.enableAnalytics}</h4>
             <p className="text-sm text-gray-600">
-              {isProcessing ? 'Updating...' : 'Off unless you choose to enable it'}
+              {isProcessing ? uiText.updating : uiText.analyticsOff}
             </p>
           </div>
           <div className="flex items-center gap-2 ml-4">
@@ -187,9 +189,9 @@ export default function AnalyticsConsentSwitch() {
           <div className="p-4 border rounded-lg bg-gray-50">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-gray-800 mb-1">Your User ID</div>
+                <div className="font-medium text-gray-800 mb-1">{uiText.yourUserId}</div>
                 <p className="text-xs text-gray-600 mb-2">
-                  Share this ID when reporting issues to help us investigate your issue logs
+                  {uiText.userIdHint}
                 </p>
                 <div className="flex items-center gap-2">
                   <code className="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-300 font-mono flex-1 truncate">
@@ -205,12 +207,12 @@ export default function AnalyticsConsentSwitch() {
                     {isCopied ? (
                       <>
                         <Check className="w-3.5 h-3.5 text-green-600" />
-                        <span className="text-green-600">Copied!</span>
+                        <span className="text-green-600">{uiText.copied}</span>
                       </>
                     ) : (
                       <>
                         <Copy className="w-3.5 h-3.5" />
-                        <span>Copy</span>
+                        <span>{uiText.copy}</span>
                       </>
                     )}
                   </Button>

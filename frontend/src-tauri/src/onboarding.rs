@@ -7,6 +7,10 @@ use anyhow::Result;
 use crate::state::AppState;
 use crate::database::repositories::setting::SettingsRepository;
 
+// The RK distribution uses external inference services. Bundled model setup
+// remains available as an explicit user action, but it must never gate startup.
+const MODEL_ONBOARDING_ENABLED: bool = false;
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OnboardingStatus {
@@ -41,6 +45,15 @@ impl Default for OnboardingStatus {
     }
 }
 
+fn apply_distribution_policy(mut status: OnboardingStatus) -> OnboardingStatus {
+    if !MODEL_ONBOARDING_ENABLED {
+        status.completed = true;
+        status.current_step = status.current_step.max(4);
+    }
+
+    status
+}
+
 
 /// Load onboarding status from store
 pub async fn load_onboarding_status<R: Runtime>(
@@ -51,7 +64,7 @@ pub async fn load_onboarding_status<R: Runtime>(
         Ok(store) => store,
         Err(e) => {
             warn!("Failed to access onboarding store: {}, using defaults", e);
-            return Ok(OnboardingStatus::default());
+            return Ok(apply_distribution_policy(OnboardingStatus::default()));
         }
     };
 
@@ -73,7 +86,7 @@ pub async fn load_onboarding_status<R: Runtime>(
         OnboardingStatus::default()
     };
 
-    Ok(status)
+    Ok(apply_distribution_policy(status))
 }
 
 /// Save onboarding status to store
@@ -141,7 +154,9 @@ pub async fn get_onboarding_status<R: Runtime>(
     let store = app.store("onboarding-status.json")
         .map_err(|e| format!("Failed to access store: {}", e))?;
 
-    if store.get("status").is_none() {
+    if !MODEL_ONBOARDING_ENABLED {
+        Ok(Some(status))
+    } else if store.get("status").is_none() {
         Ok(None)
     } else {
         Ok(Some(status))
@@ -242,5 +257,15 @@ mod tests {
         .expect("old onboarding status should remain compatible");
 
         assert_eq!(status.model_status.selected_summary_model, None);
+    }
+
+    #[test]
+    fn rk_distribution_skips_model_onboarding_without_claiming_models_exist() {
+        let status = apply_distribution_policy(OnboardingStatus::default());
+
+        assert!(status.completed);
+        assert_eq!(status.current_step, 4);
+        assert_eq!(status.model_status.parakeet, "not_downloaded");
+        assert_eq!(status.model_status.summary, "not_downloaded");
     }
 }

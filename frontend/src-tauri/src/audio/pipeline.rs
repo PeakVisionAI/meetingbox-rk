@@ -25,7 +25,7 @@ struct AudioMixerRingBuffer {
 impl AudioMixerRingBuffer {
     fn new(sample_rate: u32) -> Self {
         // Use 50ms windows for mixing
-        let window_ms = 600.0;
+        let window_ms = 100.0;
         let window_size_samples = (sample_rate as f32 * window_ms / 1000.0) as usize;
 
         // CRITICAL FIX: Increase max buffer to 400ms for system audio stability
@@ -187,6 +187,35 @@ impl ProfessionalAudioMixer {
 
         mixed
     }
+}
+
+fn mix_window_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        0.0
+    } else {
+        (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
+    }
+}
+
+fn mix_window_peak(samples: &[f32]) -> f32 {
+    samples.iter().map(|x| x.abs()).fold(0.0f32, f32::max)
+}
+
+/// Silero often misses already-normalized / loopback speech on RK. Treat mix-window
+/// energy as speech so SenseVoice still gets segments when the recording file is loud.
+const ENERGY_SPEECH_RMS: f32 = 0.025;
+const ENERGY_MIN_SAMPLES_16K: usize = 32000; // 2s before a live emit
+const ENERGY_FLUSH_MIN_SAMPLES_16K: usize = 32000; // 2s on stop
+const ENERGY_MAX_SAMPLES_16K: usize = 16000 * 8;
+
+fn downsample_for_energy_fallback(samples: &[f32], sample_rate: u32) -> Vec<f32> {
+    if sample_rate == 16000 {
+        return samples.to_vec();
+    }
+    if sample_rate == 48000 {
+        return samples.iter().step_by(3).copied().collect();
+    }
+    super::audio_processing::resample_audio(samples, sample_rate, 16000)
 }
 
 /// Simplified audio capture without broadcast channels
@@ -694,6 +723,10 @@ pub struct AudioPipeline {
     mixer: ProfessionalAudioMixer,
     // Recording sender for pre-mixed audio
     recording_sender_for_mixed: Option<mpsc::UnboundedSender<AudioChunk>>,
+    energy_fallback_16k: Vec<f32>,
+    mix_windows_seen: u64,
+    energy_quiet_windows: u32,
+    last_transcription_end: f64,
 }
 
 impl AudioPipeline {
@@ -760,6 +793,69 @@ impl AudioPipeline {
             ring_buffer,
             mixer,
             recording_sender_for_mixed: None,  // Will be set by manager
+            energy_fallback_16k: Vec::new(),
+            mix_windows_seen: 0,
+            energy_quiet_windows: 0,
+            last_transcription_end: 0.0,
+        }
+    }
+
+    fn next_transcription_timestamp(&mut self, proposed: f64, duration: f64) -> f64 {
+        let timestamp = if proposed + 0.05 < self.last_transcription_end {
+            self.last_transcription_end
+        } else {
+            proposed.max(0.0)
+        };
+        self.last_transcription_end = timestamp + duration.max(0.0);
+        timestamp
+    }
+
+    fn send_transcription_16k(&mut self, samples: Vec<f32>, reason: &str) {
+        if samples.len() < ENERGY_FLUSH_MIN_SAMPLES_16K {
+            info!(
+                "⏭️ Skipping short {} segment: {} samples (< {} = 1s)",
+                reason,
+                samples.len(),
+                ENERGY_FLUSH_MIN_SAMPLES_16K
+            );
+            return;
+        }
+        let duration = samples.len() as f64 / 16000.0;
+        let now = self.state.get_recording_duration().unwrap_or(0.0);
+        let timestamp = self.next_transcription_timestamp((now - duration).max(0.0), duration);
+        info!(
+            "📤 Sending {} segment: {:.1}ms, {} samples, ts={:.2}s",
+            reason,
+            duration * 1000.0,
+            samples.len(),
+            timestamp
+        );
+        let transcription_chunk = AudioChunk {
+            data: samples,
+            sample_rate: 16000,
+            timestamp,
+            chunk_id: self.chunk_id_counter,
+            device_type: DeviceType::Microphone,
+        };
+        if let Err(e) = self.transcription_sender.send(transcription_chunk) {
+            warn!("Failed to send {} segment: {}", reason, e);
+        } else {
+            self.chunk_id_counter += 1;
+        }
+    }
+
+    fn emit_energy_fallback(&mut self) {
+        let mut data = std::mem::take(&mut self.energy_fallback_16k);
+        if data.len() < ENERGY_FLUSH_MIN_SAMPLES_16K {
+            self.energy_fallback_16k.clear();
+            return;
+        }
+        while data.len() > ENERGY_MAX_SAMPLES_16K {
+            let chunk: Vec<f32> = data.drain(..ENERGY_MAX_SAMPLES_16K).collect();
+            self.send_transcription_16k(chunk, "energy-fallback");
+        }
+        if data.len() >= 800 {
+            self.send_transcription_16k(data, "energy-fallback");
         }
     }
 
@@ -831,20 +927,50 @@ impl AudioPipeline {
                             // Previous 2x gain was causing excessive limiting/distortion
                             let mixed_with_gain = mixed_clean;
 
+                            let mix_rms = mix_window_rms(&mixed_with_gain);
+                            let mix_peak = mix_window_peak(&mixed_with_gain);
+                            self.mix_windows_seen += 1;
+                            if self.mix_windows_seen <= 6 || self.mix_windows_seen % 8 == 0 {
+                                info!(
+                                    "🎚️ Mix window #{} rms={:.4} peak={:.4} samples={}",
+                                    self.mix_windows_seen,
+                                    mix_rms,
+                                    mix_peak,
+                                    mixed_with_gain.len()
+                                );
+                            }
+
+                            let mut vad_input = mixed_with_gain.clone();
+                            if mix_peak > 1e-4 && mix_peak < 0.35 {
+                                let gain = 0.5 / mix_peak;
+                                for sample in &mut vad_input {
+                                    *sample *= gain;
+                                }
+                            }
+
                             // STEP 3: Send mixed audio for transcription (VAD + Whisper)
-                            match self.vad_processor.process_audio(&mixed_with_gain) {
+                            let mut vad_emitted = 0usize;
+                            match self.vad_processor.process_audio(&vad_input) {
                                 Ok(speech_segments) => {
                                     for segment in speech_segments {
                                         let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
 
                                         if segment.samples.len() >= 800 {  // Minimum 50ms at 16kHz - matches Parakeet capability
-                                            info!("📤 Sending VAD segment: {:.1}ms, {} samples",
-                                                  duration_ms, segment.samples.len());
+                                            let timestamp = self.next_transcription_timestamp(
+                                                segment.start_timestamp_ms / 1000.0,
+                                                duration_ms / 1000.0,
+                                            );
+                                            info!(
+                                                "📤 Sending VAD segment: {:.1}ms, {} samples, ts={:.2}s",
+                                                duration_ms,
+                                                segment.samples.len(),
+                                                timestamp
+                                            );
 
                                             let transcription_chunk = AudioChunk {
                                                 data: segment.samples,
                                                 sample_rate: 16000,
-                                                timestamp: segment.start_timestamp_ms / 1000.0,
+                                                timestamp,
                                                 chunk_id: self.chunk_id_counter,
                                                 device_type: DeviceType::Microphone,  // Mixed audio
                                             };
@@ -853,6 +979,7 @@ impl AudioPipeline {
                                                 warn!("Failed to send VAD segment: {}", e);
                                             } else {
                                                 self.chunk_id_counter += 1;
+                                                vad_emitted += 1;
                                             }
                                         } else {
                                             debug!("⏭️ Dropping short VAD segment: {:.1}ms ({} samples < 800)",
@@ -862,6 +989,43 @@ impl AudioPipeline {
                                 }
                                 Err(e) => {
                                     warn!("⚠️ VAD error: {}", e);
+                                }
+                            }
+
+                            if vad_emitted > 0 || self.vad_processor.is_holding_speech() {
+                                // VAD already owns this utterance. Do not also emit
+                                // energy-fallback slices of the same speech.
+                                self.energy_fallback_16k.clear();
+                                self.energy_quiet_windows = 0;
+                            } else if mix_rms >= ENERGY_SPEECH_RMS {
+                                self.energy_quiet_windows = 0;
+                                let resampled = downsample_for_energy_fallback(
+                                    &mixed_with_gain,
+                                    self.sample_rate,
+                                );
+                                self.energy_fallback_16k.extend_from_slice(&resampled);
+                                if self.energy_fallback_16k.len() >= ENERGY_MAX_SAMPLES_16K {
+                                    self.emit_energy_fallback();
+                                }
+                            } else {
+                                self.energy_quiet_windows = self.energy_quiet_windows.saturating_add(1);
+                                if self.energy_fallback_16k.len() >= ENERGY_MIN_SAMPLES_16K
+                                    && self.energy_quiet_windows >= 2
+                                {
+                                    info!(
+                                        "🎚️ Energy fallback emitting {} samples after quiet (rms={:.4})",
+                                        self.energy_fallback_16k.len(),
+                                        mix_rms
+                                    );
+                                    self.emit_energy_fallback();
+                                    self.energy_quiet_windows = 0;
+                                } else if self.energy_quiet_windows >= 4 {
+                                    if self.energy_fallback_16k.len() >= ENERGY_FLUSH_MIN_SAMPLES_16K {
+                                        self.emit_energy_fallback();
+                                    } else {
+                                        self.energy_fallback_16k.clear();
+                                    }
+                                    self.energy_quiet_windows = 0;
                                 }
                             }
 
@@ -908,13 +1072,21 @@ impl AudioPipeline {
 
                     // Send segments >= 50ms (800 samples at 16kHz) - matches main pipeline filter
                     if segment.samples.len() >= 800 {
-                        info!("📤 Sending final VAD segment to Whisper: {:.1}ms duration, {} samples",
-                              duration_ms, segment.samples.len());
+                        let timestamp = self.next_transcription_timestamp(
+                            segment.start_timestamp_ms / 1000.0,
+                            duration_ms / 1000.0,
+                        );
+                        info!(
+                            "📤 Sending final VAD segment: {:.1}ms, {} samples, ts={:.2}s",
+                            duration_ms,
+                            segment.samples.len(),
+                            timestamp
+                        );
 
                         let transcription_chunk = AudioChunk {
                             data: segment.samples,
                             sample_rate: 16000,
-                            timestamp: segment.start_timestamp_ms / 1000.0,
+                            timestamp,
                             chunk_id: self.chunk_id_counter,
                             device_type: DeviceType::Microphone,
                         };
@@ -933,6 +1105,16 @@ impl AudioPipeline {
             Err(e) => {
                 warn!("Failed to flush VAD processor: {}", e);
             }
+        }
+
+        if self.energy_fallback_16k.len() >= ENERGY_FLUSH_MIN_SAMPLES_16K {
+            info!(
+                "🎚️ Energy fallback flush emitting {} samples",
+                self.energy_fallback_16k.len()
+            );
+            self.emit_energy_fallback();
+        } else {
+            self.energy_fallback_16k.clear();
         }
 
         Ok(())

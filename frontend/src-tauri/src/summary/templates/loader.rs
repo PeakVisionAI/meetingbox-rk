@@ -193,6 +193,10 @@ pub fn list_template_ids() -> Vec<String> {
         }
     }
 
+    ids.retain(|id| id == "standard_meeting");
+    if ids.is_empty() {
+        ids.push("standard_meeting".to_string());
+    }
     ids.sort();
     ids
 }
@@ -227,7 +231,7 @@ mod tests {
         assert!(template.is_ok());
 
         let template = template.unwrap();
-        assert_eq!(template.name, "Daily Standup");
+        assert_eq!(template.name, "每日站会");
         assert!(!template.sections.is_empty());
     }
 
@@ -240,8 +244,7 @@ mod tests {
     #[test]
     fn test_list_template_ids() {
         let ids = list_template_ids();
-        assert!(ids.contains(&"daily_standup".to_string()));
-        assert!(ids.contains(&"standard_meeting".to_string()));
+        assert_eq!(ids, vec!["standard_meeting".to_string()]);
     }
 
     #[test]

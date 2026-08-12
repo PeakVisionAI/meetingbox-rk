@@ -70,6 +70,25 @@ impl DecodedAudio {
         // Step 2: Resample to 16kHz if needed
         const WHISPER_SAMPLE_RATE: u32 = 16000;
         if self.sample_rate != WHISPER_SAMPLE_RATE {
+            if let Some(mut resampled) = try_integer_downsample(
+                &mono_samples,
+                self.sample_rate,
+                WHISPER_SAMPLE_RATE,
+            ) {
+                info!(
+                    "Integer downsample {} samples from {}Hz to {}Hz",
+                    mono_samples.len(),
+                    self.sample_rate,
+                    WHISPER_SAMPLE_RATE
+                );
+                if let Some(callback) = &progress_callback {
+                    callback(100, "Converted sample rate");
+                }
+                for sample in &mut resampled {
+                    *sample = sample.clamp(-1.0, 1.0);
+                }
+                return resampled;
+            }
             // Large files are processed in chunks through the sinc resampler
             // to keep memory bounded while preserving audio quality.
             // Linear interpolation (fast_resample) was removed because it lacks
@@ -106,6 +125,27 @@ impl DecodedAudio {
             mono_samples
         }
     }
+}
+
+/// Fast path for exact integer ratios such as 48kHz → 16kHz.
+///
+/// Averaging each factor-sized window is a cheap box filter. RK3588 has no
+/// ffmpeg, and 512-tap sinc on a 2-minute 48kHz file takes ~100s.
+fn try_integer_downsample(input: &[f32], from_rate: u32, to_rate: u32) -> Option<Vec<f32>> {
+    if to_rate == 0 || from_rate <= to_rate || from_rate % to_rate != 0 {
+        return None;
+    }
+    let factor = (from_rate / to_rate) as usize;
+    if factor == 0 || input.len() < factor {
+        return None;
+    }
+    let out_len = input.len() / factor;
+    let mut output = Vec::with_capacity(out_len);
+    for chunk in input.chunks_exact(factor) {
+        let sum: f32 = chunk.iter().copied().sum();
+        output.push(sum / factor as f32);
+    }
+    Some(output)
 }
 
 /// Resample large audio files in fixed-size chunks through the sinc resampler.
@@ -214,7 +254,7 @@ fn chunked_resample_with_progress(
             }
             callback(
                 progress_pct as u32,
-                &format!("Resampling audio: {:.0}%", progress_pct),
+                &format!("正在重采样：{:.0}%", progress_pct),
             );
         }
     }
@@ -309,7 +349,7 @@ fn convert_to_wav_with_ffmpeg(
     );
 
     if let Some(cb) = progress_callback {
-        cb(0, "Converting audio format with FFmpeg...");
+        cb(0, "正在用 FFmpeg 转换音频格式…");
     }
 
     let input_str = input_path
@@ -377,7 +417,7 @@ fn convert_to_wav_with_ffmpeg(
     }
 
     if let Some(cb) = progress_callback {
-        cb(100, "FFmpeg conversion complete");
+        cb(100, "FFmpeg 转换完成");
     }
 
     info!(
@@ -538,7 +578,7 @@ pub fn decode_audio_file_with_progress(
                     let current_progress = ((all_samples.len() as f64 / expected as f64) * 100.0) as u32;
                     if current_progress >= last_progress + 10 && current_progress <= 100 {
                         last_progress = current_progress;
-                        callback(current_progress, &format!("Decoding audio: {}%", current_progress));
+                        callback(current_progress, &format!("正在解码音频：{}%", current_progress));
                     }
                 }
             }
@@ -551,7 +591,7 @@ pub fn decode_audio_file_with_progress(
 
     // Ensure we report 100% completion
     if let Some(callback) = &progress_callback {
-        callback(100, "Decoding complete");
+        callback(100, "解码完成");
     }
 
     if all_samples.is_empty() {
@@ -630,6 +670,17 @@ mod tests {
         assert!(!result.is_empty(), "Result should not be empty");
         assert!(result.len() > 1000 && result.len() < 2000,
             "Expected ~1600 samples, got {}", result.len());
+        assert_eq!(result.len(), 1600);
+    }
+
+    #[test]
+    fn test_integer_downsample_48k_to_16k() {
+        let input = vec![0.0, 0.3, 0.6, 0.9, 0.9, 0.9];
+        let result = try_integer_downsample(&input, 48000, 16000).expect("48k/16k is integer");
+        assert_eq!(result.len(), 2);
+        assert!((result[0] - 0.3).abs() < 0.001);
+        assert!((result[1] - 0.9).abs() < 0.001);
+        assert!(try_integer_downsample(&input, 44100, 16000).is_none());
     }
 
     #[test]

@@ -15,8 +15,9 @@ use tokio::task::JoinHandle;
 
 use super::{
     parse_audio_device,
-    default_input_device,   // Get default microphone
     default_output_device,  // Get default system audio
+    resolve_recording_microphone,
+    system_audio_conflicts_with_microphone,
     RecordingManager,
     DeviceEvent,
     DeviceMonitorType
@@ -105,6 +106,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         return Err(validation_error);
     }
     info!("✅ Transcription model validation passed");
+    let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
+    info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
     // Async-first approach - no more blocking operations!
     info!("🚀 Starting async recording initialization");
@@ -127,47 +130,16 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         };
 
     // ============================================================================
-    // MICROPHONE DEVICE RESOLUTION: Preference → Default → Error
+    // MICROPHONE DEVICE RESOLUTION: Preference → USB meeting mic → Default → Error
     // ============================================================================
-    let microphone_device = match preferred_mic_name {
-        Some(pref_name) => {
-            info!("🎤 Attempting to use preferred microphone: '{}'", pref_name);
-            match parse_audio_device(&pref_name) {
-                Ok(device) => {
-                    info!("✅ Using preferred microphone: '{}'", device.name);
-                    Some(Arc::new(device))
-                }
-                Err(e) => {
-                    warn!("⚠️ Preferred microphone '{}' not available: {}", pref_name, e);
-                    warn!("   Falling back to system default microphone...");
-                    match default_input_device() {
-                        Ok(device) => {
-                            info!("✅ Using default microphone: '{}'", device.name);
-                            Some(Arc::new(device))
-                        }
-                        Err(default_err) => {
-                            error!("❌ No microphone available (preferred and default both failed)");
-                            return Err(format!(
-                                "No microphone device available. Preferred device '{}' not found, and default microphone unavailable: {}",
-                                pref_name, default_err
-                            ));
-                        }
-                    }
-                }
-            }
+    let microphone_device = match resolve_recording_microphone(preferred_mic_name.as_deref()) {
+        Ok(device) => {
+            info!("✅ Using microphone: '{}'", device.name);
+            Some(Arc::new(device))
         }
-        None => {
-            info!("🎤 No microphone preference set, using system default");
-            match default_input_device() {
-                Ok(device) => {
-                    info!("✅ Using default microphone: '{}'", device.name);
-                    Some(Arc::new(device))
-                }
-                Err(e) => {
-                    error!("❌ No default microphone available");
-                    return Err(format!("No microphone device available: {}", e));
-                }
-            }
+        Err(e) => {
+            error!("❌ No microphone available: {}", e);
+            return Err(format!("No microphone device available: {}", e));
         }
     };
 
@@ -213,6 +185,17 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                 }
             }
         }
+    };
+
+    let system_device = match (&microphone_device, system_device) {
+        (Some(mic), Some(sys)) if system_audio_conflicts_with_microphone(&mic.name, &sys.name) => {
+            warn!(
+                "⚠️ System audio '{}' aliases microphone '{}'; capturing microphone only",
+                sys.name, mic.name
+            );
+            None
+        }
+        (_, device) => device,
     };
 
     // Always ensure a meeting name is set so incremental saver initializes
@@ -351,15 +334,20 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         return Err(validation_error);
     }
     info!("✅ Transcription model validation passed");
+    let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
+    info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
-    // Parse devices
-    let mic_device = if let Some(ref name) = mic_device_name {
-        Some(Arc::new(parse_audio_device(name).map_err(|e| {
-            format!("Invalid microphone device '{}': {}", name, e)
-        })?))
-    } else {
-        None
-    };
+    // Parse devices. On Linux, onboard analog / Pulse default is replaced by
+    // a USB conference microphone when one is plugged in.
+    let mic_device = Some(Arc::new(
+        resolve_recording_microphone(mic_device_name.as_deref()).map_err(|e| {
+            format!(
+                "Invalid microphone device '{}': {}",
+                mic_device_name.as_deref().unwrap_or("default"),
+                e
+            )
+        })?,
+    ));
 
     let system_device = if let Some(ref name) = system_device_name {
         Some(Arc::new(parse_audio_device(name).map_err(|e| {
@@ -367,6 +355,17 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         })?))
     } else {
         None
+    };
+
+    let system_device = match (&mic_device, system_device) {
+        (Some(mic), Some(sys)) if system_audio_conflicts_with_microphone(&mic.name, &sys.name) => {
+            warn!(
+                "⚠️ System audio '{}' aliases microphone '{}'; capturing microphone only",
+                sys.name, mic.name
+            );
+            None
+        }
+        (_, device) => device,
     };
 
     // Async-first approach for custom devices - no more blocking operations!
@@ -586,9 +585,9 @@ pub async fn stop_recording<R: Runtime>(
             }
         });
 
-        // Wait up to 10 minutes for transcription completion to prevent indefinite hangs
+        // Wait for remaining chunks, but do not freeze the UI if ASR is stuck.
         match tokio::time::timeout(
-            tokio::time::Duration::from_secs(600), // 10 minutes max
+            tokio::time::Duration::from_secs(45),
             task_handle
         ).await {
             Ok(Ok(())) => {
@@ -599,7 +598,7 @@ pub async fn stop_recording<R: Runtime>(
                 // Continue anyway - the worker may have processed most chunks
             }
             Err(_) => {
-                warn!("⏱️ Transcription timeout (10 minutes) reached, continuing shutdown to prevent indefinite hang");
+                warn!("⏱️ Transcription timeout reached, continuing shutdown");
                 // Continue shutdown even on timeout - better to lose some chunks than hang forever
             }
         }
@@ -609,6 +608,8 @@ pub async fn stop_recording<R: Runtime>(
     } else {
         info!("ℹ️ No transcription task found to wait for");
     }
+
+    super::transcription::rk_asr_provider::finalize_current_meeting().await;
 
     // Step 3: Now safely unload Whisper model after ALL chunks are processed
     let _ = app.emit(

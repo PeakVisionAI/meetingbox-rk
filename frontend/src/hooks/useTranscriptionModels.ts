@@ -8,7 +8,7 @@ export interface RawModelInfo {
 }
 
 export interface ModelOption {
-  provider: 'whisper' | 'parakeet';
+  provider: 'rk-asr' | 'whisper' | 'parakeet';
   name: string;
   displayName: string;
   size_mb: number;
@@ -45,6 +45,13 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
     setLoadingModels(true);
     const allModels: ModelOption[] = [];
 
+    allModels.push({
+      provider: 'rk-asr',
+      name: 'sensevoice-rknn',
+      displayName: '本机 SenseVoice',
+      size_mb: 0,
+    });
+
     // Fetch Whisper models
     try {
       const whisperModels = await invoke<RawModelInfo[]>('whisper_get_available_models');
@@ -53,7 +60,7 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
         .map((m) => ({
           provider: 'whisper' as const,
           name: m.name,
-          displayName: `🏠 Whisper: ${m.name}`,
+          displayName: `本地 Whisper：${m.name}`,
           size_mb: m.size_mb,
         }));
       allModels.push(...availableWhisper);
@@ -69,7 +76,7 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
         .map((m) => ({
           provider: 'parakeet' as const,
           name: m.name,
-          displayName: `⚡ Parakeet: ${m.name}`,
+          displayName: `Parakeet：${m.name}`,
           size_mb: m.size_mb,
         }));
       allModels.push(...availableParakeet);
@@ -87,6 +94,7 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
     // Note: 'localWhisper' in config maps to 'whisper' provider in model list
     const configuredMatch = allModels.find(
       (m) =>
+        (configuredProvider === 'rk-asr' && m.provider === 'rk-asr') ||
         (configuredProvider === 'localWhisper' && m.provider === 'whisper' && m.name === configuredModel) ||
         (configuredProvider === 'parakeet' && m.provider === 'parakeet' && m.name === configuredModel)
     );

@@ -45,6 +45,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Local HDMI/debug screenshots
+/artifacts
+
 # Audio files
 *.wav
 

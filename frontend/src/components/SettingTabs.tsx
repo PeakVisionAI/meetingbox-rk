@@ -3,6 +3,7 @@ import { ModelConfig, ModelSettingsModal } from "./ModelSettingsModal"
 import { TranscriptModelProps, TranscriptSettings } from "./TranscriptSettings"
 import { RecordingSettings, RecordingPreferences } from "./RecordingSettings"
 import { About } from "./About";
+import { uiText } from "@/lib/uiText";
 
 interface SettingTabsProps {
     modelConfig: ModelConfig;
@@ -33,10 +34,10 @@ export function SettingTabs({
     return (
         <Tabs defaultValue={defaultTab} className="w-full max-h-[calc(100vh-10rem)] overflow-y-auto" onValueChange={handleTabChange}>
   <TabsList>
-    <TabsTrigger value="transcriptSettings">Transcript</TabsTrigger>
-    <TabsTrigger value="modelSettings">Ai Summary</TabsTrigger>
-    <TabsTrigger value="recordingSettings">Preferences</TabsTrigger>
-    <TabsTrigger value="about">About</TabsTrigger>
+    <TabsTrigger value="transcriptSettings">{uiText.transcriptTab}</TabsTrigger>
+    <TabsTrigger value="modelSettings">{uiText.aiSummaryTab}</TabsTrigger>
+    <TabsTrigger value="recordingSettings">{uiText.preferences}</TabsTrigger>
+    <TabsTrigger value="about">{uiText.about}</TabsTrigger>
   </TabsList>
   <TabsContent value="modelSettings">
     <ModelSettingsModal

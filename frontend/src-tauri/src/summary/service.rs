@@ -431,8 +431,12 @@ impl SummaryService {
                     1748  // 2048 - 300 for overhead
                 }
             }
+        } else if provider == LLMProvider::CustomOpenAI {
+            // RK1828 Qwen3-4B context is 4096. Chunk long meetings instead of
+            // stuffing the whole transcript into one prefill.
+            1200
         } else {
-            // Cloud providers (OpenAI, Claude, Groq, CustomOpenAI) handle large contexts automatically
+            // Cloud providers (OpenAI, Claude, Groq) handle large contexts automatically
             100000  // Effectively unlimited for single-pass processing
         };
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
+import { uiText } from '@/lib/uiText';
 
 export function useTemplates() {
   const [availableTemplates, setAvailableTemplates] = useState<Array<{
@@ -20,8 +21,10 @@ export function useTemplates() {
           name: string;
           description: string;
         }>;
-        console.log('Available templates:', templates);
-        setAvailableTemplates(templates);
+        const productTemplates = templates.filter((template) => template.id === 'standard_meeting');
+        console.log('Available templates:', productTemplates);
+        setAvailableTemplates(productTemplates);
+        setSelectedTemplate('standard_meeting');
       } catch (error) {
         console.error('Failed to fetch templates:', error);
       }
@@ -32,8 +35,8 @@ export function useTemplates() {
   // Handle template selection
   const handleTemplateSelection = useCallback((templateId: string, templateName: string) => {
     setSelectedTemplate(templateId);
-    toast.success('Template selected', {
-      description: `Using "${templateName}" template for summary generation`,
+    toast.success(uiText.templateSelected, {
+      description: uiText.usingTemplate(templateName),
     });
     Analytics.trackFeatureUsed('template_selected');
   }, []);

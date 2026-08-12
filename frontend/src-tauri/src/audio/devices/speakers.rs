@@ -35,13 +35,20 @@ pub fn default_output_device() -> Result<AudioDevice> {
         return Ok(AudioDevice::new(device.name()?, DeviceType::Output));
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
     {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or_else(|| anyhow!("No default output device found"))?;
-        return Ok(AudioDevice::new(device.name()?, DeviceType::Output));
+        match find_linux_system_audio_device() {
+            Some(device) => {
+                info!("🔊 Using Pulse monitor for system audio: '{}'", device.name);
+                Ok(device)
+            }
+            None => {
+                warn!("⚠️ No PulseAudio monitor source found; system audio capture disabled");
+                Err(anyhow!(
+                    "No PulseAudio monitor source found for system audio capture"
+                ))
+            }
+        }
     }
 }
 
@@ -112,4 +119,46 @@ pub fn find_builtin_output_device() -> Result<Option<AudioDevice>> {
 
     warn!("⚠️ No built-in speaker found (searched {} patterns)", builtin_patterns.len());
     Ok(None)
+}
+
+#[cfg(target_os = "linux")]
+fn find_linux_system_audio_device() -> Option<AudioDevice> {
+    use super::capture_guard::{is_generic_capture_alias, is_pulse_monitor_name};
+
+    let host = cpal::default_host();
+    let input_names: Vec<String> = host
+        .input_devices()
+        .ok()?
+        .filter_map(|device| device.name().ok())
+        .collect();
+
+    if let Some(monitor) = pulse_default_sink_monitor() {
+        if let Some(matched) = input_names.iter().find(|name| {
+            *name == &monitor || name.contains(&monitor) || monitor.contains(*name)
+        }) {
+            return Some(AudioDevice::new(matched.clone(), DeviceType::Output));
+        }
+        info!("Pulse default sink monitor is '{}', but CPAL does not expose it", monitor);
+    }
+
+    input_names
+        .into_iter()
+        .find(|name| is_pulse_monitor_name(name) && !is_generic_capture_alias(name))
+        .map(|name| AudioDevice::new(name, DeviceType::Output))
+}
+
+#[cfg(target_os = "linux")]
+fn pulse_default_sink_monitor() -> Option<String> {
+    let output = std::process::Command::new("pactl")
+        .args(["get-default-sink"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sink = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if sink.is_empty() {
+        return None;
+    }
+    Some(format!("{sink}.monitor"))
 }

@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode, useRef } from 'react';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import { SelectedDevices } from '@/components/DeviceSelection';
-import { configService, ModelConfig } from '@/services/configService';
+import { configService, ModelConfig, RK_SUMMARY_DEFAULTS } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
 import Analytics from '@/lib/analytics';
 import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures } from '@/types/betaFeatures';
@@ -99,16 +99,22 @@ const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
 export function ConfigProvider({ children }: { children: ReactNode }) {
   // Model configuration state
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
-    provider: 'ollama',
-    model: 'llama3.2:latest',
+    provider: RK_SUMMARY_DEFAULTS.provider,
+    model: RK_SUMMARY_DEFAULTS.model,
     whisperModel: 'large-v3',
-    ollamaEndpoint: null
+    ollamaEndpoint: null,
+    customOpenAIEndpoint: RK_SUMMARY_DEFAULTS.endpoint,
+    customOpenAIModel: RK_SUMMARY_DEFAULTS.model,
+    customOpenAIApiKey: null,
+    maxTokens: RK_SUMMARY_DEFAULTS.maxTokens,
+    temperature: RK_SUMMARY_DEFAULTS.temperature,
+    topP: RK_SUMMARY_DEFAULTS.topP,
   });
 
   // Transcript model configuration state
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
-    provider: 'parakeet',
-    model: 'parakeet-tdt-0.6b-v3-int8',
+    provider: 'rk-asr',
+    model: 'sensevoice-rknn',
     apiKey: null
   });
 
@@ -140,7 +146,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [selectedLanguage, setSelectedLanguage] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('primaryLanguage');
-      return saved || 'auto';
+      return saved || 'zh';
     }
     return 'auto';
   });
@@ -178,6 +184,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // Load Ollama models (uses saved endpoint, re-runs when endpoint changes after config load)
   useEffect(() => {
     const loadModels = async () => {
+      if (modelConfig.provider !== 'ollama') {
+        setModels([]);
+        setError('');
+        return;
+      }
+
       try {
         const endpoint = modelConfig.ollamaEndpoint || null;
         const modelList = await invoke<OllamaModel[]>('get_ollama_models', { endpoint });
@@ -189,7 +201,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }
     };
     loadModels();
-  }, [modelConfig.ollamaEndpoint]);
+  }, [modelConfig.ollamaEndpoint, modelConfig.provider]);
 
   // Load transcript configuration on mount
   useEffect(() => {
@@ -199,8 +211,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         if (config) {
           console.log('[ConfigContext] Loaded saved transcript config:', config);
           setTranscriptModelConfig({
-            provider: config.provider || 'parakeet',
-            model: config.model || 'parakeet-tdt-0.6b-v3-int8',
+            provider: config.provider || 'rk-asr',
+            model: config.model || 'sensevoice-rknn',
             apiKey: config.apiKey || null
           });
         }

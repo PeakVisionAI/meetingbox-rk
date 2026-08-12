@@ -1,0 +1,8 @@
+{
+  "productName": "会议助手",
+  "bundle": {
+    "externalBin": [
+      "binaries/ffmpeg"
+    ]
+  }
+}

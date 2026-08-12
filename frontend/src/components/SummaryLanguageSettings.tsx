@@ -6,6 +6,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { LanguagePickerPopover } from '@/components/LanguagePickerPopover';
 import { useRecentLanguages } from '@/hooks/useRecentLanguages';
 import { labelForCode } from '@/lib/summary-languages';
+import { uiText } from '@/lib/uiText';
 
 export function SummaryLanguageSettings() {
   const { recents, pinned, addRecent, removeRecent, setPinned } = useRecentLanguages();
@@ -19,11 +20,10 @@ export function SummaryLanguageSettings() {
     <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm relative">
       <div className="flex items-center gap-2 mb-2">
         <Globe size={18} className="text-gray-500" />
-        <h3 className="text-lg font-semibold text-gray-900">Summary Language</h3>
+        <h3 className="text-lg font-semibold text-gray-900">{uiText.summaryLanguage}</h3>
       </div>
       <p className="text-sm text-gray-600 mb-4">
-        Pin one language as the default for new meetings. Unpinned languages remain as
-        quick-switch options in the summary generator. Auto uses the dominant transcript language.
+        {uiText.summaryLanguageHint}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">

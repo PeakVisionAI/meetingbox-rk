@@ -31,9 +31,16 @@ pub async fn list_audio_devices() -> Result<Vec<AudioDevice>> {
     if let Ok(other_devices) = host.devices() {
         for device in other_devices {
             if let Ok(name) = device.name() {
-                if !devices.iter().any(|d| d.name == name) {
-                    devices.push(AudioDevice::new(name, DeviceType::Output));
+                if devices.iter().any(|d| d.name == name) {
+                    continue;
                 }
+                #[cfg(target_os = "linux")]
+                {
+                    if super::capture_guard::is_raw_alsa_pcm_name(&name) {
+                        continue;
+                    }
+                }
+                devices.push(AudioDevice::new(name, DeviceType::Output));
             }
         }
     }

@@ -4,6 +4,8 @@ import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummary
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
+import { copyText } from '@/lib/clipboard';
+import { uiText } from '@/lib/uiText';
 
 interface UseCopyOperationsProps {
   meeting: any;
@@ -51,7 +53,7 @@ export function useCopyOperations({
       return allData.transcripts;
     } catch (error) {
       console.error('❌ Error fetching all transcripts:', error);
-      toast.error('Failed to fetch transcripts for copying');
+      toast.error(uiText.noTranscriptToCopy);
       return [];
     }
   }, []);
@@ -63,9 +65,7 @@ export function useCopyOperations({
     const allTranscripts = await fetchAllTranscripts(meeting.id);
 
     if (!allTranscripts.length) {
-      const error_msg = 'No transcripts available to copy';
-      console.log(error_msg);
-      toast.error(error_msg);
+      toast.error(uiText.noTranscriptToCopy);
       return;
     }
 
@@ -83,14 +83,20 @@ export function useCopyOperations({
       return `[${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
     };
 
-    const header = `# Transcript of the Meeting: ${meeting.id} - ${meetingTitle ?? meeting.title}\n\n`;
-    const date = `## Date: ${new Date(meeting.created_at).toLocaleDateString()}\n\n`;
+    const header = `# 会议转写：${meetingTitle ?? meeting.title}\n\n`;
+    const date = `## 日期：${new Date(meeting.created_at).toLocaleDateString('zh-CN')}\n\n`;
     const fullTranscript = allTranscripts
       .map(t => `${formatTime(t.audio_start_time, t.timestamp)} ${t.text}  `)
       .join('\n');
 
-    await navigator.clipboard.writeText(header + date + fullTranscript);
-    toast.success("Transcript copied to clipboard");
+    try {
+      await copyText(header + date + fullTranscript);
+      toast.success(uiText.transcriptCopied);
+    } catch (error) {
+      console.error('Failed to copy transcript:', error);
+      toast.error(uiText.copyFailed, { description: uiText.copyFailedHint });
+      return;
+    }
 
     // Track copy analytics
     const wordCount = allTranscripts
@@ -152,31 +158,18 @@ export function useCopyOperations({
       // If still no summary content, show message
       if (!summaryMarkdown.trim()) {
         console.error('❌ No summary content available to copy');
-        toast.error('No summary content available to copy');
+        toast.error(uiText.noSummaryToCopy);
         return;
       }
 
-      // Build metadata header
-      const header = `# Meeting Summary: ${meetingTitle}\n\n`;
-      const metadata = `**Meeting ID:** ${meeting.id}\n**Date:** ${new Date(meeting.created_at).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })}\n**Copied on:** ${new Date().toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })}\n\n---\n\n`;
+      const header = `# 会议纪要：${meetingTitle}\n\n`;
+      const metadata = `**日期：** ${new Date(meeting.created_at).toLocaleString('zh-CN')}\n\n---\n\n`;
 
       const fullMarkdown = header + metadata + summaryMarkdown;
-      await navigator.clipboard.writeText(fullMarkdown);
+      await copyText(fullMarkdown);
 
       console.log('✅ Successfully copied to clipboard!');
-      toast.success("Summary copied to clipboard");
+      toast.success(uiText.summaryCopied);
 
       // Track copy analytics
       await Analytics.trackCopy('summary', {
@@ -185,7 +178,7 @@ export function useCopyOperations({
       });
     } catch (error) {
       console.error('❌ Failed to copy summary:', error);
-      toast.error("Failed to copy summary");
+      toast.error(uiText.copyFailed, { description: uiText.copyFailedHint });
     }
   }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
 

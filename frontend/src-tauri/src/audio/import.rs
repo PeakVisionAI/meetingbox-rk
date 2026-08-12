@@ -7,6 +7,10 @@ use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
+use crate::audio::transcription::provider::TranscriptionProvider;
+use crate::audio::transcription::rk_asr_provider::{
+    self, is_rk_asr_provider, RkAsrProvider,
+};
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -266,6 +270,7 @@ pub async fn start_import<R: Runtime>(
     IMPORT_CANCELLED.store(false, Ordering::SeqCst);
 
     let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_rk_asr = is_rk_asr_provider(provider.as_deref());
     let result = run_import(
         app.clone(),
         source_path,
@@ -277,7 +282,9 @@ pub async fn start_import<R: Runtime>(
     .await;
 
     // Unload the engine after the batch job (success, failure, or cancellation)
-    super::common::unload_engine_after_batch(use_parakeet).await;
+    if !use_rk_asr {
+        super::common::unload_engine_after_batch(use_parakeet).await;
+    }
 
     // Guard will automatically clear flag on drop
     // No need for manual: IMPORT_IN_PROGRESS.store(false, Ordering::SeqCst);
@@ -328,10 +335,11 @@ async fn run_import<R: Runtime>(
         title, source_path, language, model, provider
     );
 
-    // Determine which provider to use (default to whisper)
+    // Determine which provider to use (default to on-board RK SenseVoice)
     let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_rk_asr = is_rk_asr_provider(provider.as_deref());
 
-    emit_progress(&app, "copying", 5, "Creating meeting folder...");
+    emit_progress(&app, "copying", 5, "正在创建会议文件夹…");
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -343,7 +351,7 @@ async fn run_import<R: Runtime>(
     let meeting_folder = create_meeting_folder(&base_folder, &title, false)?;
 
     // Copy audio file to meeting folder
-    emit_progress(&app, "copying", 10, "Copying audio file...");
+    emit_progress(&app, "copying", 10, "正在复制音频文件…");
 
     let dest_filename = format!(
         "audio.{}",
@@ -370,7 +378,7 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "decoding", 15, "Decoding audio file...");
+    emit_progress(&app, "decoding", 15, "正在解码音频…");
 
     // Decode the audio file with progress updates
     let app_for_decode = app.clone();
@@ -393,7 +401,7 @@ async fn run_import<R: Runtime>(
         duration_seconds, decoded.sample_rate, decoded.channels
     );
 
-    emit_progress(&app, "resampling", 20, "Converting audio format...");
+    emit_progress(&app, "resampling", 20, "正在转换音频格式…");
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -419,7 +427,7 @@ async fn run_import<R: Runtime>(
         audio_samples.len()
     );
 
-    emit_progress(&app, "vad", 25, "Detecting speech segments...");
+    emit_progress(&app, "vad", 25, "正在检测语音片段…");
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -441,7 +449,7 @@ async fn run_import<R: Runtime>(
                     "vad",
                     overall_progress,
                     &format!(
-                        "Detecting speech segments... {}% ({} found)",
+                        "正在检测语音片段… {}%（已找到 {} 段）",
                         vad_progress, segments_found
                     ),
                 );
@@ -452,6 +460,23 @@ async fn run_import<R: Runtime>(
     .await
     .map_err(|e| anyhow!("VAD task panicked: {}", e))?
     .map_err(|e| anyhow!("VAD processing failed: {}", e))?;
+
+    let file_duration_ms = duration_seconds * 1000.0;
+    let mut speech_segments = speech_segments;
+    let dropped = speech_segments.len();
+    speech_segments.retain(|seg| {
+        seg.end_timestamp_ms > seg.start_timestamp_ms
+            && seg.start_timestamp_ms >= 0.0
+            && seg.start_timestamp_ms < file_duration_ms + 250.0
+            && !seg.samples.is_empty()
+    });
+    if speech_segments.len() != dropped {
+        warn!(
+            "Dropped {} invalid VAD segments (end<=start or outside {:.1}s file)",
+            dropped - speech_segments.len(),
+            duration_seconds
+        );
+    }
 
     let total_segments = speech_segments.len();
     info!("VAD detected {} speech segments (redemption_time={}ms)", total_segments, VAD_REDEMPTION_TIME_MS);
@@ -505,10 +530,19 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "transcribing", 30, "Loading transcription engine...");
+    emit_progress(&app, "transcribing", 30, "正在加载转写引擎…");
 
     // Initialize the appropriate engine
-    let whisper_engine = if !use_parakeet && total_segments > 0 {
+    let rk_engine = if use_rk_asr && total_segments > 0 {
+        rk_asr_provider::begin_meeting_session();
+        Some(
+            RkAsrProvider::local()
+                .map_err(|error| anyhow!("RK ASR unavailable: {error}"))?,
+        )
+    } else {
+        None
+    };
+    let whisper_engine = if !use_parakeet && !use_rk_asr && total_segments > 0 {
         Some(get_or_init_whisper(&app, model.as_deref()).await?)
     } else {
         None
@@ -561,7 +595,7 @@ async fn run_import<R: Runtime>(
             "transcribing",
             progress,
             &format!(
-                "Transcribing segment {} of {} ({:.1}s)...",
+                "正在转写第 {} / {} 段（{:.1} 秒）…",
                 i + 1,
                 processable_count,
                 segment_duration_sec
@@ -579,7 +613,19 @@ async fn run_import<R: Runtime>(
         }
 
         // Transcribe
-        let (text, conf) = if use_parakeet {
+        let (text, conf) = if use_rk_asr {
+            let engine = rk_engine.as_ref().unwrap();
+            let mut samples = segment.samples.clone();
+            if samples.len() < 16_000 {
+                samples.resize(16_000, 0.0);
+            }
+            rk_asr_provider::set_chunk_start_ms(segment.start_timestamp_ms.round() as i64);
+            let result = engine
+                .transcribe(samples, language.clone())
+                .await
+                .map_err(|e| anyhow!("RK ASR transcription failed on segment {}: {}", i, e))?;
+            (result.text, result.confidence.unwrap_or(0.9))
+        } else if use_parakeet {
             let engine = parakeet_engine.as_ref().unwrap();
             let text = engine
                 .transcribe_audio(segment.samples.clone())
@@ -627,7 +673,7 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "saving", 85, "Creating meeting...");
+    emit_progress(&app, "saving", 85, "正在创建会议…");
 
     // Create transcript segments
     let segments = create_transcript_segments(&all_transcripts);
@@ -646,7 +692,7 @@ async fn run_import<R: Runtime>(
     .await?;
 
     // Write transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, "saving", 90, "Writing transcript files...");
+    emit_progress(&app, "saving", 90, "正在写入转写文件…");
 
     if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -663,7 +709,7 @@ async fn run_import<R: Runtime>(
         warn!("Failed to write metadata.json: {}", e);
     }
 
-    emit_progress(&app, "complete", 100, "Import complete");
+    emit_progress(&app, "complete", 100, "导入完成");
 
     Ok(ImportResult {
         meeting_id,

@@ -20,6 +20,7 @@ import { Sparkles, Settings, Loader2, FileText, Check, Square } from 'lucide-rea
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
+import { uiText } from '@/lib/uiText';
 import { useState, useEffect, useRef, ReactNode } from 'react';
 import { isOllamaNotInstalledError } from '@/lib/utils';
 import { BuiltInModelInfo } from '@/lib/builtin-ai';
@@ -257,7 +258,7 @@ export function SummaryGeneratorButtonGroup({
           title="Stop summary generation"
         >
           <Square className="xl:mr-2" size={18} fill="currentColor" />
-          <span className="hidden lg:inline xl:inline">Stop</span>
+          <span className="hidden lg:inline xl:inline">{uiText.stop}</span>
         </Button>
       ) : (
         <Button
@@ -280,12 +281,12 @@ export function SummaryGeneratorButtonGroup({
           {isCheckingModels || isModelConfigLoading ? (
             <>
               <Loader2 className="animate-spin xl:mr-2" size={18} />
-              <span className="hidden xl:inline">Processing...</span>
+              <span className="hidden xl:inline">{uiText.generating}</span>
             </>
           ) : (
             <>
               <Sparkles className="xl:mr-2" size={18} />
-              <span className="hidden lg:inline xl:inline">{hasSummary ? 'Regenerate Summary' : 'Generate Summary'}</span>
+              <span className="hidden lg:inline xl:inline">{hasSummary ? uiText.regenerateSummary : uiText.generateSummary}</span>
             </>
           )}
         </Button>
@@ -302,7 +303,7 @@ export function SummaryGeneratorButtonGroup({
             title="Summary Settings"
           >
             <Settings />
-            <span className="hidden lg:inline">AI Model</span>
+            <span className="hidden lg:inline">{uiText.aiModel}</span>
           </Button>
         </DialogTrigger>
         <DialogContent
@@ -325,7 +326,7 @@ export function SummaryGeneratorButtonGroup({
       </Dialog>
 
       {/* Template selector dropdown */}
-      {availableTemplates.length > 0 && (
+      {availableTemplates.length > 1 && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -334,7 +335,7 @@ export function SummaryGeneratorButtonGroup({
               title="Select summary template"
             >
               <FileText />
-              <span className="hidden lg:inline">Template</span>
+              <span className="hidden lg:inline">{uiText.template}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">

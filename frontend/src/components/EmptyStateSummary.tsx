@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { FileQuestion, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { uiText } from '@/lib/uiText';
 import {
   Tooltip,
   TooltipContent,
@@ -26,10 +27,10 @@ export function EmptyStateSummary({ onGenerate, hasModel, isGenerating = false }
     >
       <FileQuestion className="w-16 h-16 text-gray-300 mb-4" />
       <h3 className="text-lg font-semibold text-gray-900 mb-2">
-        No Summary Generated Yet
+        {uiText.noSummaryTitle}
       </h3>
       <p className="text-sm text-gray-500 mb-6 max-w-md">
-        Generate an AI-powered summary of your meeting transcript to get key points, action items, and decisions.
+        {uiText.noSummaryHint}
       </p>
 
       <TooltipProvider>
@@ -39,16 +40,16 @@ export function EmptyStateSummary({ onGenerate, hasModel, isGenerating = false }
               <Button
                 onClick={onGenerate}
                 disabled={!hasModel || isGenerating}
-                className="gap-2"
+                className="gap-2 bg-blue-600 hover:bg-blue-700"
               >
                 <Sparkles className="w-4 h-4" />
-                {isGenerating ? 'Generating...' : 'Generate Summary'}
+                {isGenerating ? uiText.generating : uiText.generateSummary}
               </Button>
             </div>
           </TooltipTrigger>
           {!hasModel && (
             <TooltipContent>
-              <p>Please select a model in Settings first</p>
+              <p>{uiText.selectModelFirst}</p>
             </TooltipContent>
           )}
         </Tooltip>
@@ -56,7 +57,7 @@ export function EmptyStateSummary({ onGenerate, hasModel, isGenerating = false }
 
       {!hasModel && (
         <p className="text-xs text-amber-600 mt-3">
-          Please select a model in Settings first
+          {uiText.selectModelFirst}
         </p>
       )}
     </motion.div>

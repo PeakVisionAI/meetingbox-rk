@@ -10,22 +10,22 @@ export function WelcomeStep() {
   const features = [
     {
       icon: Lock,
-      title: 'Your data never leaves your device',
+      title: '数据不离开本机',
     },
     {
       icon: Sparkles,
-      title: 'Intelligent summaries & insights',
+      title: '智能纪要与要点',
     },
     {
       icon: Cpu,
-      title: 'Works offline, no cloud required',
+      title: '可离线使用，无需云端',
     },
   ];
 
   return (
     <OnboardingContainer
-      title="Welcome to Meetily"
-      description="Record. Transcribe. Summarize. All on your device."
+      title={uiText.welcomeTitle}
+      description="录音、转写、纪要，全部在本机完成。"
       step={1}
       hideProgress={true}
     >
@@ -56,9 +56,9 @@ export function WelcomeStep() {
             onClick={goNext}
             className="w-full h-11 bg-gray-900 hover:bg-gray-800 text-white"
           >
-            Get Started
+            开始使用
           </Button>
-          <p className="text-xs text-center text-gray-500">Takes less than 3 minutes</p>
+          <p className="text-xs text-center text-gray-500">大约 3 分钟即可完成</p>
         </div>
       </div>
     </OnboardingContainer>

@@ -140,10 +140,15 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
             // This is a model-related error that requires user action
             showModal('modelSelector', userMessage);
           } else {
-            // Show toast instead of modal for non-actionable errors (consistent with sidebar)
+            const looksLikeTraceback =
+              userMessage.includes('Traceback') ||
+              userMessage.includes('502') ||
+              userMessage.includes('sensevoice');
             toast.error('', {
-              description: userMessage,
-              duration: 5000,
+              description: looksLikeTraceback
+                ? '这一段没有识别到，请继续说话'
+                : userMessage,
+              duration: 4000,
             });
           }
         });

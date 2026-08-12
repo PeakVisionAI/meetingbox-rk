@@ -2,6 +2,7 @@ use log::info;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::manager::DatabaseManager;
+use super::repositories::setting::SettingsRepository;
 use crate::state::AppState;
 
 /// Initialize database on app startup
@@ -29,6 +30,20 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
         let db_manager = DatabaseManager::new_from_app_handle(app)
             .await
             .map_err(|e| format!("Failed to initialize database manager: {}", e))?;
+
+        let defaults_applied = SettingsRepository::ensure_rk_summary_defaults(db_manager.pool())
+            .await
+            .map_err(|e| format!("Failed to initialize RK summary defaults: {}", e))?;
+        if defaults_applied {
+            info!("Initialized RK1828 summary defaults");
+        }
+        let transcript_defaults_applied =
+            SettingsRepository::ensure_rk_transcript_defaults(db_manager.pool())
+                .await
+                .map_err(|e| format!("Failed to initialize RK transcript defaults: {}", e))?;
+        if transcript_defaults_applied {
+            info!("Initialized RK3588 transcript defaults");
+        }
 
         app.manage(AppState { db_manager });
         info!("Database initialized successfully");

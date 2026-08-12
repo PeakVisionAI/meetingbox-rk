@@ -8,6 +8,10 @@ use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
+use crate::audio::transcription::provider::TranscriptionProvider;
+use crate::audio::transcription::rk_asr_provider::{
+    self, is_rk_asr_provider, RkAsrProvider,
+};
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -33,7 +37,7 @@ impl RetranscriptionGuard {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            return Err("Retranscription already in progress".to_string());
+            return Err("正在增强转写，请稍候".to_string());
         }
         Ok(RetranscriptionGuard)
     }
@@ -102,10 +106,13 @@ pub async fn start_retranscription<R: Runtime>(
     RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
 
     let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_rk_asr = is_rk_asr_provider(provider.as_deref());
     let result = run_retranscription(app.clone(), meeting_id.clone(), meeting_folder_path, language, model, provider).await;
 
     // Unload the engine after the batch job (success, failure, or cancellation)
-    super::common::unload_engine_after_batch(use_parakeet).await;
+    if !use_rk_asr {
+        super::common::unload_engine_after_batch(use_parakeet).await;
+    }
 
     // Guard will automatically clear flag on drop
     // No need for manual: RETRANSCRIPTION_IN_PROGRESS.store(false, Ordering::SeqCst);
@@ -180,8 +187,9 @@ async fn run_retranscription<R: Runtime>(
     let folder_path = PathBuf::from(&meeting_folder_path);
     let audio_path = find_audio_file(&folder_path)?;
 
-    // Determine which provider to use (default to whisper)
+    // Determine which provider to use (default to on-board RK SenseVoice)
     let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_rk_asr = is_rk_asr_provider(provider.as_deref());
 
     info!(
         "Starting retranscription for meeting {} with language {:?}, model {:?}, provider {:?}",
@@ -189,11 +197,11 @@ async fn run_retranscription<R: Runtime>(
     );
 
     // Emit progress: decoding
-    emit_progress(&app, &meeting_id, "decoding", 5, "Decoding audio file...");
+    emit_progress(&app, &meeting_id, "decoding", 5, "正在解码音频…");
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
+        return Err(anyhow!("已取消增强转写"));
     }
 
     // Decode the audio file (CPU-intensive, run in blocking task)
@@ -210,11 +218,11 @@ async fn run_retranscription<R: Runtime>(
         duration_seconds, decoded.sample_rate, decoded.channels
     );
 
-    emit_progress(&app, &meeting_id, "decoding", 15, "Converting audio format...");
+    emit_progress(&app, &meeting_id, "decoding", 15, "正在转换音频格式…");
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
+        return Err(anyhow!("已取消增强转写"));
     }
 
     // Convert to 16kHz mono format (CPU-intensive, run in blocking task)
@@ -225,11 +233,11 @@ async fn run_retranscription<R: Runtime>(
     .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
     info!("Converted to 16kHz mono format: {} samples", audio_samples.len());
 
-    emit_progress(&app, &meeting_id, "vad", 20, "Detecting speech segments...");
+    emit_progress(&app, &meeting_id, "vad", 20, "正在检测语音片段…");
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
+        return Err(anyhow!("已取消增强转写"));
     }
 
     // Use VAD to find natural speech boundaries (same approach as live transcription)
@@ -250,7 +258,7 @@ async fn run_retranscription<R: Runtime>(
                     &meeting_id_for_vad,
                     "vad",
                     overall_progress,
-                    &format!("Detecting speech segments... {}% ({} found)", vad_progress, segments_found),
+                    &format!("正在检测语音片段… {}%（已找到 {} 段）", vad_progress, segments_found),
                 );
 
                 // Return false to cancel if cancellation requested
@@ -261,6 +269,23 @@ async fn run_retranscription<R: Runtime>(
     .await
     .map_err(|e| anyhow!("VAD task panicked: {}", e))?
     .map_err(|e| anyhow!("VAD processing failed: {}", e))?;
+
+    let file_duration_ms = duration_seconds * 1000.0;
+    let mut speech_segments = speech_segments;
+    let dropped = speech_segments.len();
+    speech_segments.retain(|seg| {
+        seg.end_timestamp_ms > seg.start_timestamp_ms
+            && seg.start_timestamp_ms >= 0.0
+            && seg.start_timestamp_ms < file_duration_ms + 250.0
+            && !seg.samples.is_empty()
+    });
+    if speech_segments.len() != dropped {
+        warn!(
+            "Dropped {} invalid VAD segments (end<=start or outside {:.1}s file)",
+            dropped - speech_segments.len(),
+            duration_seconds
+        );
+    }
 
     let total_segments = speech_segments.len();
     info!("VAD detected {} speech segments (redemption_time={}ms)", total_segments, VAD_REDEMPTION_TIME_MS);
@@ -296,10 +321,19 @@ async fn run_retranscription<R: Runtime>(
         return Err(anyhow!("No speech detected in audio file"));
     }
 
-    emit_progress(&app, &meeting_id, "transcribing", 25, "Loading transcription engine...");
+    emit_progress(&app, &meeting_id, "transcribing", 25, "正在加载转写引擎…");
 
     // Initialize the appropriate engine once (not per-segment)
-    let whisper_engine = if !use_parakeet {
+    let rk_engine = if use_rk_asr {
+        rk_asr_provider::begin_meeting_session();
+        Some(
+            RkAsrProvider::local()
+                .map_err(|error| anyhow!("RK ASR unavailable: {error}"))?,
+        )
+    } else {
+        None
+    };
+    let whisper_engine = if !use_parakeet && !use_rk_asr {
         Some(get_or_init_whisper(&app, model.as_deref()).await?)
     } else {
         None
@@ -342,7 +376,7 @@ async fn run_retranscription<R: Runtime>(
     for (i, segment) in processable_segments.iter().enumerate() {
         // Check for cancellation before each segment
         if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-            return Err(anyhow!("Retranscription cancelled"));
+            return Err(anyhow!("已取消增强转写"));
         }
 
         // Calculate progress (25% to 80% range for transcription)
@@ -354,7 +388,7 @@ async fn run_retranscription<R: Runtime>(
             "transcribing",
             progress,
             &format!(
-                "Transcribing segment {} of {} ({:.1}s)...",
+                "正在转写第 {} / {} 段（{:.1} 秒）…",
                 i + 1,
                 processable_count,
                 segment_duration_sec
@@ -368,7 +402,19 @@ async fn run_retranscription<R: Runtime>(
         }
 
         // Transcribe this segment
-        let (text, conf) = if use_parakeet {
+        let (text, conf) = if use_rk_asr {
+            let engine = rk_engine.as_ref().unwrap();
+            let mut samples = segment.samples.clone();
+            if samples.len() < 16_000 {
+                samples.resize(16_000, 0.0);
+            }
+            rk_asr_provider::set_chunk_start_ms(segment.start_timestamp_ms.round() as i64);
+            let result = engine
+                .transcribe(samples, language.clone())
+                .await
+                .map_err(|e| anyhow!("RK ASR transcription failed on segment {}: {}", i, e))?;
+            (result.text, result.confidence.unwrap_or(0.9))
+        } else if use_parakeet {
             let engine = parakeet_engine.as_ref().unwrap();
             let text = engine
                 .transcribe_audio(segment.samples.clone())
@@ -413,10 +459,10 @@ async fn run_retranscription<R: Runtime>(
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
+        return Err(anyhow!("已取消增强转写"));
     }
 
-    emit_progress(&app, &meeting_id, "saving", 80, "Saving transcripts...");
+    emit_progress(&app, &meeting_id, "saving", 80, "正在保存转写…");
 
     // Create transcript segments with proper timestamps from VAD
     let segments = create_transcript_segments(&all_transcripts);
@@ -466,7 +512,7 @@ async fn run_retranscription<R: Runtime>(
     );
 
     // Write updated transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, &meeting_id, "saving", 90, "Writing transcript files...");
+    emit_progress(&app, &meeting_id, "saving", 90, "正在写入转写文件…");
 
     if let Err(e) = write_transcripts_json(&folder_path, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -488,7 +534,7 @@ async fn run_retranscription<R: Runtime>(
         warn!("Failed to update metadata.json: {}", e);
     }
 
-    emit_progress(&app, &meeting_id, "complete", 100, "Retranscription complete");
+    emit_progress(&app, &meeting_id, "complete", 100, "增强转写完成");
 
     Ok(RetranscriptionResult {
         meeting_id,
@@ -787,7 +833,7 @@ pub async fn start_retranscription_command<R: Runtime>(
 
     // Check if retranscription is already in progress (guard will be acquired in start_retranscription)
     if RETRANSCRIPTION_IN_PROGRESS.load(Ordering::SeqCst) {
-        return Err("Retranscription already in progress".to_string());
+            return Err("正在增强转写，请稍候".to_string());
     }
 
     // Clone values for the spawned task
@@ -814,7 +860,7 @@ pub async fn start_retranscription_command<R: Runtime>(
 
     Ok(RetranscriptionStarted {
         meeting_id,
-        message: "Retranscription started".to_string(),
+        message: "已开始增强转写".to_string(),
     })
 }
 

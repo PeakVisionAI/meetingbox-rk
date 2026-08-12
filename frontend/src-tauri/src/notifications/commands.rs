@@ -332,10 +332,10 @@ pub async fn show_recording_started_notification<R: Runtime>(
                 }
 
                 // Fallback: Use Tauri's notification API directly
-                let title = "Meetily";
+                let title = "会议助手";
                 let body = match meeting_name {
-                    Some(name) => format!("Recording started for meeting: {}", name),
-                    None => "Recording has started. Please inform others in the meeting that you are recording.".to_string(),
+                    Some(name) => format!("已开始录制会议：{}", name),
+                    None => "录音已开始。请告知会场其他人正在录音。".to_string(),
                 };
 
                 log_info!("Using direct Tauri notification fallback: {} - {}", title, body);
@@ -382,8 +382,8 @@ pub async fn show_recording_stopped_notification<R: Runtime>(
         }
 
         // Use direct Tauri notification as fallback for stop notification
-        let title = "Meetily";
-        let body = "Recording has stopped";
+        let title = "会议助手";
+        let body = "录音已停止";
 
         log_info!("Using direct Tauri notification fallback: {} - {}", title, body);
 

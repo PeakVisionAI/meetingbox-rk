@@ -160,6 +160,17 @@ pub async fn import_and_initialize_database(
             format!("Failed to import database: {}", e)
         })?;
 
+    crate::database::repositories::setting::SettingsRepository::ensure_rk_summary_defaults(
+        db_manager.pool(),
+    )
+    .await
+    .map_err(|e| format!("Failed to initialize RK summary defaults: {}", e))?;
+    crate::database::repositories::setting::SettingsRepository::ensure_rk_transcript_defaults(
+        db_manager.pool(),
+    )
+    .await
+    .map_err(|e| format!("Failed to initialize RK transcript defaults: {}", e))?;
+
     // Update app state with the new manager
     app.manage(AppState { db_manager });
 
@@ -187,31 +198,15 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
     // Update app state with the new manager
     app.manage(AppState { db_manager: db_manager.clone() });
 
-    // Set default model configuration for fresh installs
+    // Set RK distribution defaults for fresh installs.
     let pool = db_manager.pool();
-    
-    let default_summary_model = crate::summary::summary_engine::commands::get_recommended_summary_model_for_current_system()
-        .unwrap_or("qwen3.5:2b");
+    crate::database::repositories::setting::SettingsRepository::ensure_rk_summary_defaults(pool)
+        .await
+        .map_err(|e| format!("Failed to initialize RK summary defaults: {}", e))?;
 
-    // Default Summary Model: Built-in AI (Qwen recommendation for this system)
-    if let Err(e) = crate::database::repositories::setting::SettingsRepository::save_model_config(
-        pool,
-        "builtin-ai",
-        default_summary_model,
-        "large-v3", // Default whisper model (unused for builtin but required)
-        None,
-    ).await {
-        error!("Failed to set default summary model config: {}", e);
-    }
-
-    // Default Transcription Model: Parakeet
-    if let Err(e) = crate::database::repositories::setting::SettingsRepository::save_transcript_config(
-        pool,
-        "parakeet",
-        crate::config::DEFAULT_PARAKEET_MODEL,
-    ).await {
-        error!("Failed to set default transcription model config: {}", e);
-    }
+    crate::database::repositories::setting::SettingsRepository::ensure_rk_transcript_defaults(pool)
+        .await
+        .map_err(|e| format!("Failed to initialize RK transcript defaults: {}", e))?;
 
     info!("Fresh database initialized successfully with default models");
 

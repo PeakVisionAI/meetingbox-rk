@@ -132,8 +132,13 @@ pub fn start_transcription_task<R: Runtime>(
                                 );
                             }
 
-                            // Check if model is still loaded before processing
-                            if !engine_clone.is_model_loaded().await {
+                            // RK ASR stays loaded in the local service; a per-chunk
+                            // healthz round-trip only adds latency.
+                            let model_ready = match &engine_clone {
+                                TranscriptionEngine::Provider(_) => true,
+                                _ => engine_clone.is_model_loaded().await,
+                            };
+                            if !model_ready {
                                 warn!("⚠️ Worker {}: Model unloaded, but continuing to preserve chunk {}", worker_id, chunk.chunk_id);
                                 // Still count as completed even if we can't process
                                 chunks_completed_clone.fetch_add(1, Ordering::SeqCst);
@@ -419,6 +424,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
 
     // Skip VAD processing here since the pipeline already extracted speech using VAD
     let speech_samples = transcription_data;
+    super::rk_asr_provider::set_chunk_start_ms((chunk.timestamp * 1000.0).round() as i64);
 
     // Check for empty samples - improved error handling
     if speech_samples.is_empty() {
@@ -560,7 +566,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                         "transcription-error",
                         &serde_json::json!({
                             "error": e.to_string(),
-                            "userMessage": format!("Transcription failed: {}", e),
+                            "userMessage": "这一段没有识别到，请继续说话",
                             "actionable": false
                         }),
                     );

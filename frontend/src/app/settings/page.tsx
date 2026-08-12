@@ -12,14 +12,15 @@ import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { uiText } from '@/lib/uiText';
 
 // Tabs configuration (constant)
 const TABS = [
-  { value: 'general', label: 'General', icon: Settings2 },
-  { value: 'recording', label: 'Recordings', icon: Mic },
-  { value: 'Transcriptionmodels', label: 'Transcription', icon: DatabaseIcon },
-  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
-  { value: 'beta', label: 'Beta', icon: FlaskConical }
+  { value: 'general', label: uiText.general, icon: Settings2 },
+  { value: 'recording', label: uiText.recordingsTab, icon: Mic },
+  { value: 'Transcriptionmodels', label: uiText.transcriptionTab, icon: DatabaseIcon },
+  { value: 'summaryModels', label: uiText.summaryTab, icon: SparkleIcon },
+  { value: 'beta', label: uiText.betaTab, icon: FlaskConical }
 ] as const;
 
 export default function SettingsPage() {
@@ -73,9 +74,9 @@ export default function SettingsPage() {
               className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
-              <span>Back</span>
+              <span>{uiText.back}</span>
             </button>
-            <h1 className="text-3xl font-bold">Settings</h1>
+            <h1 className="text-3xl font-bold">{uiText.settings}</h1>
           </div>
         </div>
       </div>

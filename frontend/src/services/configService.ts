@@ -41,6 +41,15 @@ export interface RecordingPreferences {
   preferred_system_device: string | null;
 }
 
+export const RK_SUMMARY_DEFAULTS = {
+  provider: 'custom-openai' as const,
+  endpoint: 'http://127.0.0.1:8040/v1',
+  model: 'qwen3-4b',
+  maxTokens: 768,
+  temperature: 0.3,
+  topP: 0.9,
+};
+
 /**
  * Configuration Service
  * Singleton service for managing app configuration

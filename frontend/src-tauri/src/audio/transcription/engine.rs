@@ -7,6 +7,14 @@ use log::{info, warn};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 
+fn rk_transcript_config() -> crate::api::api::TranscriptConfig {
+    crate::api::api::TranscriptConfig {
+        provider: crate::database::repositories::setting::RK_TRANSCRIPT_PROVIDER.to_string(),
+        model: crate::database::repositories::setting::RK_TRANSCRIPT_MODEL.to_string(),
+        api_key: None,
+    }
+}
+
 // ============================================================================
 // TRANSCRIPTION ENGINE ENUM
 // ============================================================================
@@ -69,20 +77,12 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
             config
         }
         Ok(None) => {
-            info!("📝 No transcript config found, defaulting to parakeet");
-            crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
-            }
+            info!("📝 No transcript config found, defaulting to RK ASR");
+            rk_transcript_config()
         }
         Err(e) => {
-            warn!("⚠️ Failed to get transcript config: {}, defaulting to parakeet", e);
-            crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
-            }
+            warn!("⚠️ Failed to get transcript config: {}, defaulting to RK ASR", e);
+            rk_transcript_config()
         }
     };
 
@@ -135,10 +135,20 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
                 }
             }
         }
+        "rk-asr" => {
+            info!("🔍 Validating RK3588 ASR service...");
+            let provider = super::rk_asr_provider::RkAsrProvider::local()
+                .map_err(|error| error.to_string())?;
+            match provider.check_ready().await {
+                Ok(true) => Ok(()),
+                Ok(false) => Err("RK ASR service is not ready".to_string()),
+                Err(error) => Err(error.to_string()),
+            }
+        }
         other => {
             warn!("❌ Unsupported transcription provider for local recording: {}", other);
             Err(format!(
-                "Provider '{}' is not supported for local transcription. Please select 'localWhisper' or 'parakeet'.",
+                "Provider '{}' is not supported for local transcription. Please select 'rk-asr', 'localWhisper', or 'parakeet'.",
                 other
             ))
         }
@@ -165,25 +175,23 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
             config
         }
         Ok(None) => {
-            info!("📝 No transcript config found, defaulting to parakeet");
-            crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
-            }
+            info!("📝 No transcript config found, defaulting to RK ASR");
+            rk_transcript_config()
         }
         Err(e) => {
-            warn!("⚠️ Failed to get transcript config: {}, defaulting to parakeet", e);
-            crate::api::api::TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
-            }
+            warn!("⚠️ Failed to get transcript config: {}, defaulting to RK ASR", e);
+            rk_transcript_config()
         }
     };
 
     // Initialize the appropriate engine based on provider
     match config.provider.as_str() {
+        "rk-asr" => {
+            info!("🎛️ Initializing RK3588 ASR service provider");
+            let provider = super::rk_asr_provider::RkAsrProvider::local()
+                .map_err(|error| error.to_string())?;
+            Ok(TranscriptionEngine::Provider(Arc::new(provider)))
+        }
         "parakeet" => {
             info!("🦜 Initializing Parakeet transcription engine");
 

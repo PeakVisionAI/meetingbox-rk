@@ -216,6 +216,22 @@ impl RecordingManager {
                 }
             };
 
+            let system_device = match (&microphone_device, system_device) {
+                (Some(mic), Some(sys))
+                    if super::devices::system_audio_conflicts_with_microphone(
+                        &mic.name,
+                        &sys.name,
+                    ) =>
+                {
+                    warn!(
+                        "System audio '{}' aliases microphone '{}'; capturing microphone only",
+                        sys.name, mic.name
+                    );
+                    None
+                }
+                (_, device) => device,
+            };
+
             // Ensure at least microphone is available
             if microphone_device.is_none() {
                 return Err(anyhow::anyhow!("No microphone device available"));

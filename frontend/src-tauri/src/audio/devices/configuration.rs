@@ -124,6 +124,13 @@ pub async fn get_device_and_config(
 
         match audio_device.device_type {
             DeviceType::Input => {
+                #[cfg(target_os = "linux")]
+                {
+                    if let Some(found) = open_linux_input_device(&host, audio_device)? {
+                        return Ok(found);
+                    }
+                }
+
                 for device in host.input_devices()? {
                     if let Ok(name) = device.name() {
                         if name == audio_device.name {
@@ -154,17 +161,26 @@ pub async fn get_device_and_config(
 
                 #[cfg(target_os = "linux")]
                 {
-                    // For Linux, we use PulseAudio monitor sources for system audio
-                    if let Ok(pulse_host) = cpal::host_from_id(cpal::HostId::Alsa) {
-                        for device in pulse_host.input_devices()? {
-                            if let Ok(name) = device.name() {
-                                if name == audio_device.name {
-                                    let default_config = device
-                                        .default_input_config()
-                                        .map_err(|e| anyhow!("Failed to get default input config: {}", e))?;
-                                    return Ok((device, default_config));
-                                }
-                            }
+                    use super::capture_guard::{
+                        is_generic_capture_alias, is_pulse_monitor_name, linux_device_lookup_names,
+                    };
+
+                    let lookup_names = linux_device_lookup_names(&audio_device.name);
+                    if lookup_names.iter().any(|name| {
+                        is_generic_capture_alias(name) && !is_pulse_monitor_name(name)
+                    }) {
+                        return Err(anyhow!(
+                            "Refusing to capture system audio from generic input alias '{}'",
+                            audio_device.name
+                        ));
+                    }
+
+                    if let Some(found) = find_linux_system_capture_device(&host, &lookup_names)? {
+                        return Ok(found);
+                    }
+                    if let Ok(alsa_host) = cpal::host_from_id(cpal::HostId::Alsa) {
+                        if let Some(found) = find_linux_system_capture_device(&alsa_host, &lookup_names)? {
+                            return Ok(found);
                         }
                     }
                 }
@@ -173,4 +189,84 @@ pub async fn get_device_and_config(
 
         Err(anyhow!("Device not found: {}", audio_device.name))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn find_linux_system_capture_device(
+    host: &cpal::Host,
+    lookup_names: &[String],
+) -> Result<Option<(cpal::Device, cpal::SupportedStreamConfig)>> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    use super::capture_guard::is_pulse_monitor_name;
+
+    for device in host.input_devices()? {
+        let Ok(name) = device.name() else {
+            continue;
+        };
+        let matches_requested = lookup_names.iter().any(|wanted| wanted == &name);
+        let matches_monitor = is_pulse_monitor_name(&name)
+            && lookup_names
+                .iter()
+                .any(|wanted| name.contains(wanted) || wanted.contains(&name));
+        if matches_requested || matches_monitor {
+            let default_config = device
+                .default_input_config()
+                .map_err(|e| anyhow!("Failed to get default input config: {}", e))?;
+            return Ok(Some((device, default_config)));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(target_os = "linux")]
+fn open_linux_input_device(
+    host: &cpal::Host,
+    audio_device: &AudioDevice,
+) -> Result<Option<(cpal::Device, cpal::SupportedStreamConfig)>> {
+    use super::capture_guard::{
+        is_linux_meeting_microphone, is_pulse_passthrough_pcm, is_raw_alsa_pcm_name,
+        linux_device_lookup_names, set_pulse_default_source,
+    };
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    let lookup_names = linux_device_lookup_names(&audio_device.name);
+    let mut passthrough = None;
+    for device in host.input_devices()? {
+        let Ok(name) = device.name() else {
+            continue;
+        };
+        if lookup_names.iter().any(|wanted| wanted == &name) && !is_raw_alsa_pcm_name(&name) {
+            let default_config = device
+                .default_input_config()
+                .map_err(|e| anyhow!("Failed to get default input config: {}", e))?;
+            return Ok(Some((device, default_config)));
+        }
+        if passthrough.is_none() && is_pulse_passthrough_pcm(&name) {
+            passthrough = Some(device);
+        }
+    }
+
+    let wants_pulse = lookup_names.iter().any(|name| {
+        name.starts_with("alsa_input.") || is_linux_meeting_microphone(name)
+    });
+    if wants_pulse {
+        if let Some(name) = lookup_names.iter().find(|name| name.starts_with("alsa_input.")) {
+            set_pulse_default_source(name);
+        }
+        if let Some(device) = passthrough {
+            let opened = device
+                .name()
+                .unwrap_or_else(|_| "pulse-default".to_string());
+            log::info!(
+                "Opening Pulse capture '{}' via ALSA device '{}'",
+                audio_device.name,
+                opened
+            );
+            let default_config = device
+                .default_input_config()
+                .map_err(|e| anyhow!("Failed to get default input config: {}", e))?;
+            return Ok(Some((device, default_config)));
+        }
+    }
+    Ok(None)
 }
