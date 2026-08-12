@@ -532,7 +532,6 @@ async fn run_import<R: Runtime>(
 
     emit_progress(&app, "transcribing", 30, "正在加载转写引擎…");
 
-    // Initialize the appropriate engine
     let rk_engine = if use_rk_asr && total_segments > 0 {
         rk_asr_provider::begin_meeting_session();
         Some(
@@ -542,6 +541,8 @@ async fn run_import<R: Runtime>(
     } else {
         None
     };
+    let _skip_vad_guard = (use_rk_asr && total_segments > 0)
+        .then(rk_asr_provider::SkipVadGuard::enable);
     let whisper_engine = if !use_parakeet && !use_rk_asr && total_segments > 0 {
         Some(get_or_init_whisper(&app, model.as_deref()).await?)
     } else {

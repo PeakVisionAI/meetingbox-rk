@@ -324,8 +324,11 @@ async fn run_retranscription<R: Runtime>(
     emit_progress(&app, &meeting_id, "transcribing", 25, "正在加载转写引擎…");
 
     // Initialize the appropriate engine once (not per-segment)
+    // Do not begin_meeting_session here. A new meeting_id would call
+    // /v1/diar/assign while finalize/Pyannote still owns the diar
+    // service, stalling the HTTP path past the client timeout.
+    let _skip_vad_guard = use_rk_asr.then(rk_asr_provider::SkipVadGuard::enable);
     let rk_engine = if use_rk_asr {
-        rk_asr_provider::begin_meeting_session();
         Some(
             RkAsrProvider::local()
                 .map_err(|error| anyhow!("RK ASR unavailable: {error}"))?,

@@ -17,6 +17,7 @@ const MINIMUM_SAMPLES: usize = 16_000; // 1s at 16kHz; shorter clips crash Sense
 static CURRENT_MEETING_ID: AtomicI64 = AtomicI64::new(0);
 static CURRENT_CHUNK_START_MS: AtomicI64 = AtomicI64::new(0);
 static MEETING_SEQ: AtomicI64 = AtomicI64::new(1);
+static SKIP_VAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Deserialize)]
 struct HealthResponse {
@@ -50,7 +51,7 @@ impl RkAsrProvider {
     pub fn new(endpoint: impl Into<String>) -> Result<Self, TranscriptionError> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(25))
+            .timeout(Duration::from_secs(180))
             .build()
             .map_err(|error| TranscriptionError::EngineFailed(error.to_string()))?;
 
@@ -144,7 +145,11 @@ impl TranscriptionProvider for RkAsrProvider {
         let form = Form::new()
             .part("audio", part)
             .text("meeting_id", meeting_id.to_string())
-            .text("chunk_start_ms", chunk_start_ms.to_string());
+            .text("chunk_start_ms", chunk_start_ms.to_string())
+            .text(
+                "skip_vad",
+                if SKIP_VAD.load(Ordering::SeqCst) { "1" } else { "0" }.to_string(),
+            );
 
         let started = std::time::Instant::now();
         let response = self
@@ -216,6 +221,7 @@ impl TranscriptionProvider for RkAsrProvider {
 }
 
 pub fn begin_meeting_session() -> i64 {
+    set_skip_vad(false);
     let seq = MEETING_SEQ.fetch_add(1, Ordering::Relaxed);
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -232,6 +238,25 @@ pub fn begin_meeting_session() -> i64 {
 
 pub fn set_chunk_start_ms(chunk_start_ms: i64) {
     CURRENT_CHUNK_START_MS.store(chunk_start_ms.max(0), Ordering::SeqCst);
+}
+
+pub fn set_skip_vad(skip_vad: bool) {
+    SKIP_VAD.store(skip_vad, Ordering::SeqCst);
+}
+
+pub struct SkipVadGuard;
+
+impl SkipVadGuard {
+    pub fn enable() -> Self {
+        set_skip_vad(true);
+        Self
+    }
+}
+
+impl Drop for SkipVadGuard {
+    fn drop(&mut self) {
+        set_skip_vad(false);
+    }
 }
 
 pub fn current_meeting_id() -> i64 {
@@ -390,6 +415,16 @@ mod tests {
         assert!(is_rk_asr_provider(Some("rk-asr")));
         assert!(!is_rk_asr_provider(Some("whisper")));
         assert!(!is_rk_asr_provider(Some("parakeet")));
+    }
+
+    #[test]
+    fn skip_vad_guard_resets_on_drop() {
+        set_skip_vad(false);
+        {
+            let _guard = SkipVadGuard::enable();
+            assert!(SKIP_VAD.load(Ordering::SeqCst));
+        }
+        assert!(!SKIP_VAD.load(Ordering::SeqCst));
     }
 
     #[test]
