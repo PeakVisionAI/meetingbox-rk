@@ -44,7 +44,7 @@ function compareTranscripts(
 
 export function TranscriptProvider({ children }: { children: ReactNode }) {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [meetingTitle, setMeetingTitle] = useState(uiText.newCall);
+  const [meetingTitle, setMeetingTitle] = useState<string>(uiText.newCall);
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
 
   // Recording state context - provides backend-synced state

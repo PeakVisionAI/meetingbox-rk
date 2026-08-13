@@ -12,6 +12,8 @@ import {
   applyPinnedSummaryLanguageToMeeting,
   detectAndCacheSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+import { accessControlService } from '@/services/accessControlService';
+import { pendingMeetingAccess } from '@/services/pendingMeetingAccess';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
@@ -290,6 +292,8 @@ export function useRecordingStop(
           }
 
           console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
+          await accessControlService.setMeetingPassword(meetingId, pendingMeetingAccess.get());
+          pendingMeetingAccess.clear();
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
 
@@ -337,7 +341,7 @@ export function useRecordingStop(
 
           // Auto-navigate after a short delay with source parameter
           setTimeout(() => {
-            router.push(`/meeting-details?id=${meetingId}&source=recording`);
+            router.push(`/meeting-details?id=${meetingId}&source=recording&askSummary=1`);
             clearTranscripts()
             Analytics.trackPageView('meeting_details');
 

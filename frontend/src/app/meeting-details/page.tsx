@@ -9,6 +9,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { LoaderIcon } from "lucide-react";
 import { useConfig } from "@/contexts/ConfigContext";
 import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
+import { accessControlService } from "@/services/accessControlService";
+import { toast } from "sonner";
 
 interface MeetingDetailsResponse {
   id: string;
@@ -19,10 +21,42 @@ interface MeetingDetailsResponse {
   folder_path?: string;
 }
 
+function MeetingAccessGuard({ meetingId, children }: { meetingId: string; children: React.ReactNode }) {
+  const router = useRouter();
+  const [password, setPassword] = useState('');
+  const [unlocked, setUnlocked] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+
+  const verify = async () => {
+    try {
+      if (await accessControlService.verifyMeetingPassword(meetingId, password)) setUnlocked(true);
+      else toast.error('会议密码不正确');
+    } catch (error) {
+      if (process.env.NODE_ENV === 'development' && !(window as any).__TAURI_INTERNALS__) {
+        setUnlocked(true);
+        toast.info('浏览器开发模式：已跳过 Tauri 本地会议校验');
+        return;
+      }
+      toast.error('无法验证会议密码', { description: String(error) });
+    }
+  };
+  const reset = async () => {
+    if (newPassword.trim().length < 8) return toast.error('会议密码至少需要 8 个字符');
+    try { await accessControlService.resetMeetingPassword(meetingId, adminPassword, newPassword); setPassword(newPassword); setResetMode(false); toast.success('会议密码已重设，请使用新密码进入'); }
+    catch (error) { toast.error('重设失败', { description: String(error) }); }
+  };
+
+  if (unlocked) return <>{children}</>;
+  return <div className="hyos-meeting-lock"><div className="hyos-modal compact"><h2>{resetMode ? '重设会议密码' : '访问会议文件'}</h2><p>{resetMode ? '验证管理员密码后，为本次会议设置新密码。' : '请输入本次会议密码；未单独设置时使用管理员密码。'}</p>{resetMode ? <><label>管理员密码<input type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /></label><label>新的会议密码<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><div className="hyos-form-tip">会议密码至少 8 个字符；仅重设本次会议密码。</div></> : <label>会议密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && verify()} autoFocus /></label>}<div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => resetMode ? setResetMode(false) : router.push('/files')}>{resetMode ? '返回' : '取消'}</button>{resetMode ? <button className="hyos-primary" onClick={reset} disabled={!adminPassword || !newPassword}>确认重设</button> : <><button className="hyos-link-button" onClick={() => setResetMode(true)}>忘记会议密码？</button><button className="hyos-primary" onClick={verify} disabled={!password}>进入文件</button></>}</div></div></div>;
+}
+
 function MeetingDetailsContent() {
   const searchParams = useSearchParams();
   const meetingId = searchParams.get('id');
   const source = searchParams.get('source'); // Check if navigated from recording
+  const askSummary = searchParams.get('askSummary') === '1';
   const { setCurrentMeeting, refetchMeetings, stopSummaryPolling } = useSidebar();
   const { isAutoSummary } = useConfig(); // Get auto-summary toggle state
   const router = useRouter();
@@ -32,6 +66,7 @@ function MeetingDetailsContent() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [shouldAutoGenerate, setShouldAutoGenerate] = useState<boolean>(false);
   const [hasCheckedAutoGen, setHasCheckedAutoGen] = useState<boolean>(false);
+  const [showSummaryDecision, setShowSummaryDecision] = useState<boolean>(askSummary);
 
   // Use pagination hook for efficient transcript loading
   const {
@@ -325,7 +360,8 @@ function MeetingDetailsContent() {
         meetingSummary === null &&
         meetingDetails.transcripts &&
         meetingDetails.transcripts.length > 0 &&
-        !hasCheckedAutoGen
+        !hasCheckedAutoGen &&
+        !askSummary
       ) {
         console.log('No summary found, checking for auto-generation...');
         await setupAutoGeneration();
@@ -333,7 +369,7 @@ function MeetingDetailsContent() {
     };
 
     checkAutoGen();
-  }, [meetingDetails, meetingSummary, hasCheckedAutoGen, setupAutoGeneration]);
+  }, [meetingDetails, meetingSummary, hasCheckedAutoGen, setupAutoGeneration, askSummary]);
 
   if (error) {
     return (
@@ -358,7 +394,7 @@ function MeetingDetailsContent() {
     </div>;
   }
 
-  return <PageContent
+  return <MeetingAccessGuard meetingId={meetingId!}><PageContent
     meeting={meetingDetails}
     summaryData={meetingSummary}
     shouldAutoGenerate={shouldAutoGenerate}
@@ -377,7 +413,7 @@ function MeetingDetailsContent() {
     totalCount={totalCount}
     loadedCount={loadedCount}
     onLoadMore={loadMore}
-  />;
+  />{showSummaryDecision && <div className="hyos-modal-backdrop"><div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="summary-decision-title"><h2 id="summary-decision-title">会议已保存</h2><p>录音、逐字稿与分段纪要已保存到本机。是否现在生成整场 AI 会议总结？</p><div className="hyos-form-tip">AI 总结仅概括会议内容与整体结论，不生成待办、责任人或完成时间。</div><div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => { setShowSummaryDecision(false); setHasCheckedAutoGen(true); }}>暂不生成</button><button className="hyos-primary" onClick={() => { setShowSummaryDecision(false); setHasCheckedAutoGen(true); setShouldAutoGenerate(true); }}>生成总结</button></div></div></div>}</MeetingAccessGuard>;
 }
 
 export default function MeetingDetails() {

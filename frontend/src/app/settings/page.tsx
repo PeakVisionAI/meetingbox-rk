@@ -1,136 +1,24 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeft, Cpu, Database, Monitor, KeyRound, Mic, ShieldAlert } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { invoke } from '@tauri-apps/api/core';
-import { motion } from 'framer-motion';
-import { TranscriptSettings } from '@/components/TranscriptSettings';
-import { RecordingSettings } from '@/components/RecordingSettings';
-import { PreferenceSettings } from '@/components/PreferenceSettings';
-import { SummaryModelSettings } from '@/components/SummaryModelSettings';
-import { BetaSettings } from '@/components/BetaSettings';
+import { toast } from 'sonner';
 import { useConfig } from '@/contexts/ConfigContext';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { uiText } from '@/lib/uiText';
-
-// Tabs configuration (constant)
-const TABS = [
-  { value: 'general', label: uiText.general, icon: Settings2 },
-  { value: 'recording', label: uiText.recordingsTab, icon: Mic },
-  { value: 'Transcriptionmodels', label: uiText.transcriptionTab, icon: DatabaseIcon },
-  { value: 'summaryModels', label: uiText.summaryTab, icon: SparkleIcon },
-  { value: 'beta', label: uiText.betaTab, icon: FlaskConical }
-] as const;
+import { accessControlService } from '@/services/accessControlService';
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
-
-  // Animation state for tabs
-  const [activeTab, setActiveTab] = useState('general');
-  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
-
-  // Load saved transcript configuration on mount
-  useEffect(() => {
-    const loadTranscriptConfig = async () => {
-      try {
-        const config = await invoke('api_get_transcript_config') as any;
-        if (config) {
-          console.log('Loaded saved transcript config:', config);
-          setTranscriptModelConfig({
-            provider: config.provider || 'localWhisper',
-            model: config.model || 'large-v3',
-            apiKey: config.apiKey || null
-          });
-        }
-      } catch (error) {
-        console.error('Failed to load transcript config:', error);
-      }
-    };
-    loadTranscriptConfig();
-  }, [setTranscriptModelConfig]);
-
-  // Update underline position when active tab changes
-  useLayoutEffect(() => {
-    const activeIndex = TABS.findIndex(tab => tab.value === activeTab);
-    const activeTabElement = tabRefs.current[activeIndex];
-
-    if (activeTabElement) {
-      const { offsetLeft, offsetWidth } = activeTabElement;
-      setUnderlineStyle({ left: offsetLeft, width: offsetWidth });
-    }
-  }, [activeTab]);
-
-  return (
-    <div className="h-screen bg-gray-50 flex flex-col">
-      {/* Fixed Header */}
-      <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-8 py-6">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.back()}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-              <span>{uiText.back}</span>
-            </button>
-            <h1 className="text-3xl font-bold">{uiText.settings}</h1>
-          </div>
-        </div>
-      </div>
-
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto p-8 pt-6">
-          {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="bg-transparent relative rounded-none border-b border-gray-200 p-0 h-auto">
-              {TABS.map((tab, index) => {
-                const Icon = tab.icon;
-                return (
-                  <TabsTrigger
-                    key={tab.value}
-                    value={tab.value}
-                    ref={el => { tabRefs.current[index] = el }}
-                    className="flex items-center gap-2 px-6 py-4 bg-transparent rounded-none border-0 data-[state=active]:bg-transparent data-[state=active]:text-blue-600 data-[state=active]:shadow-none text-gray-600 hover:text-gray-900 relative z-10"
-                  >
-                    <Icon className="w-4 h-4" />
-                    {tab.label}
-                  </TabsTrigger>
-                );
-              })}
-
-              <motion.div
-                className="absolute bottom-0 z-20 h-0.5 bg-blue-600"
-                layoutId="underline"
-                style={{ left: underlineStyle.left, width: underlineStyle.width }}
-                transition={{ type: 'spring', stiffness: 400, damping: 40 }}
-              />
-            </TabsList>
-
-            <TabsContent value="general">
-              <PreferenceSettings />
-            </TabsContent>
-            <TabsContent value="recording">
-              <RecordingSettings />
-            </TabsContent>
-            <TabsContent value="Transcriptionmodels">
-              <TranscriptSettings
-                transcriptModelConfig={transcriptModelConfig}
-                setTranscriptModelConfig={setTranscriptModelConfig}
-              />
-            </TabsContent>
-            <TabsContent value="summaryModels">
-              <SummaryModelSettings />
-            </TabsContent>
-            <TabsContent value="beta" className="mt-6">
-              <BetaSettings />
-            </TabsContent>
-          </Tabs>
-        </div>
-      </div>
-    </div>
-  );
-};
+  const { transcriptModelConfig, selectedDevices, storageLocations } = useConfig();
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const changePassword = async () => {
+    if (newPassword !== confirmPassword) return toast.error('两次输入的新密码不一致');
+    if (newPassword.trim().length < 8) return toast.error('新密码至少需要 8 个字符');
+    try { await accessControlService.changeAdminPassword(currentPassword, newPassword); setPasswordOpen(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); toast.success('管理员密码已修改'); }
+    catch (error) { toast.error('修改失败', { description: String(error) }); }
+  };
+  return <div className="hyos-page hyos-settings-page"><div className="hyos-page-title"><div><button className="hyos-back" onClick={() => router.push('/')}><ArrowLeft size={16} />返回工作台</button><h1>设置</h1><p>查看设备状态、管理员账户与系统版本。</p></div></div><section className="hyos-settings-layout"><div className="hyos-panel hyos-settings-panel"><div className="hyos-panel-head"><h2>设备状态</h2><span className="hyos-ok"><i />本地运行</span></div><div className="hyos-setting-row"><Cpu size={18} /><span>本地模型服务<small>{transcriptModelConfig.provider} / {transcriptModelConfig.model}</small></span><b>已配置</b></div><div className="hyos-setting-row"><Monitor size={18} /><span>HDMI / Type-C 外接设备<small>连接状态由操作系统显示设置管理</small></span><b>系统管理</b></div><div className="hyos-setting-row"><Mic size={18} /><span>会议麦克风<small>{selectedDevices.micDevice || '系统默认设备'}</small></span><b>已选择</b></div><div className="hyos-setting-row"><Database size={18} /><span>本地存储<small>{storageLocations?.recordings || '设备本地录音目录'}</small></span><b>本地保存</b></div></div><div className="hyos-panel hyos-settings-panel"><div className="hyos-panel-head"><h2>账户与版本</h2></div><div className="hyos-account"><span>管</span><div><b>管理员</b><small>admin · 唯一管理员账户</small></div><button className="hyos-secondary" onClick={() => setPasswordOpen(true)}><KeyRound size={15} />修改密码</button></div><div className="hyos-warning hyos-settings-warning"><ShieldAlert size={18} /><span><b>请妥善保管管理员密码</b><small>管理员密码无法找回。遗忘后需刷写设备，已有数据可能丢失。</small></span></div><div className="hyos-setting-row"><span>系统版本<small>峰瞰密会智盒桌面应用</small></span><b>HYOS 1.0</b></div><div className="hyos-form-tip">系统版本维护由服务人员现场完成，本页面不提供联网更新或安装包上传。</div></div></section>{passwordOpen && <div className="hyos-modal-backdrop"><div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="change-password-title"><button className="hyos-modal-close" onClick={() => setPasswordOpen(false)} aria-label="关闭">×</button><h2 id="change-password-title">修改管理员密码</h2><p>修改后请立即妥善保存，新密码无法找回。</p><label>当前密码<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>新密码<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>再次输入新密码<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><div className="hyos-form-tip">新密码至少 8 个字符。</div><div className="hyos-warning"><b>管理员密码不可找回</b><span>遗忘后需由服务人员刷写设备，已有数据可能丢失。</span></div><div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => setPasswordOpen(false)}>取消</button><button className="hyos-primary" onClick={changePassword} disabled={!currentPassword || !newPassword || !confirmPassword}>确认修改</button></div></div></div>}</div>;
+}

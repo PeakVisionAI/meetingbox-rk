@@ -2,7 +2,6 @@
 
 import './globals.css'
 import { Source_Sans_3 } from 'next/font/google'
-import Sidebar from '@/components/Sidebar'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
 import MainContent from '@/components/MainContent'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
@@ -14,9 +13,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { RecordingStateProvider } from '@/contexts/RecordingStateContext'
 import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
 import { TranscriptProvider } from '@/contexts/TranscriptContext'
-import { ConfigProvider, useConfig } from '@/contexts/ConfigContext'
+import { ConfigProvider } from '@/contexts/ConfigContext'
 import { OnboardingProvider } from '@/contexts/OnboardingContext'
-import { loadBetaFeatures } from '@/types/betaFeatures'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
@@ -24,6 +22,7 @@ import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
 import { uiText } from '@/lib/uiText'
+import { HYOSAccessGate } from '@/components/HYOSAccessGate'
 
 
 const sourceSans3 = Source_Sans_3({
@@ -44,13 +43,6 @@ function ConditionalImportDialog({
   handleImportDialogClose: (open: boolean) => void;
   importFilePath: string | null;
 }) {
-  const { betaFeatures } = useConfig();
-
-  // Only mount ImportAudioDialog (and its hooks/listeners) when feature is enabled
-  if (!betaFeatures.importAndRetranscribe) {
-    return null;
-  }
-
   return (
     <ImportAudioDialog
       open={showImportDialog}
@@ -62,7 +54,7 @@ function ConditionalImportDialog({
 
 // export { metadata } from './metadata'
 
-export default function RootLayout({
+function AuthenticatedApplication({
   children,
 }: {
   children: React.ReactNode
@@ -106,16 +98,6 @@ export default function RootLayout({
 
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
-    // Check if beta features are enabled (read from localStorage directly since we're outside ConfigProvider)
-    const betaFeatures = loadBetaFeatures();
-
-    if (!betaFeatures.importAndRetranscribe) {
-      toast.error(uiText.betaFeatureDisabled, {
-        description: uiText.enableImportInSettings
-      });
-      return;
-    }
-
     // Find the first audio file
     const audioFile = paths.find(p => {
       const ext = p.split('.').pop()?.toLowerCase();
@@ -141,9 +123,7 @@ export default function RootLayout({
     const setupListeners = async () => {
       // Drag enter/over - show overlay only if beta feature is enabled
       const unlistenDragEnter = await listen('tauri://drag-enter', () => {
-        if (loadBetaFeatures().importAndRetranscribe) {
-          setShowDropOverlay(true);
-        }
+        setShowDropOverlay(true);
       });
       if (cleanedUpRef.current) {
         unlistenDragEnter();
@@ -198,47 +178,50 @@ export default function RootLayout({
   }, []);
 
   return (
+    <AnalyticsProvider>
+      <RecordingStateProvider>
+        <TranscriptProvider>
+          <ConfigProvider>
+            <OllamaDownloadProvider>
+              <OnboardingProvider>
+                <UpdateCheckProvider>
+                  <SidebarProvider>
+                    <TooltipProvider>
+                      <RecordingPostProcessingProvider>
+                        <ImportDialogProvider onOpen={handleOpenImportDialog}>
+                          <DownloadProgressToastProvider />
+                          <MainContent>{children}</MainContent>
+                          <ImportDropOverlay visible={showDropOverlay} />
+                          <ConditionalImportDialog
+                            showImportDialog={showImportDialog}
+                            handleImportDialogClose={handleImportDialogClose}
+                            importFilePath={importFilePath}
+                          />
+                        </ImportDialogProvider>
+                      </RecordingPostProcessingProvider>
+                    </TooltipProvider>
+                  </SidebarProvider>
+                </UpdateCheckProvider>
+              </OnboardingProvider>
+            </OllamaDownloadProvider>
+          </ConfigProvider>
+        </TranscriptProvider>
+      </RecordingStateProvider>
+    </AnalyticsProvider>
+  )
+}
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
     <html lang="zh-CN">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
-        <AnalyticsProvider>
-          <RecordingStateProvider>
-            <TranscriptProvider>
-              <ConfigProvider>
-                <OllamaDownloadProvider>
-                  <OnboardingProvider>
-                    <UpdateCheckProvider>
-                      <SidebarProvider>
-                        <TooltipProvider>
-                          <RecordingPostProcessingProvider>
-                            <ImportDialogProvider onOpen={handleOpenImportDialog}>
-                              {/* Download progress toast provider - listens for background downloads */}
-                              <DownloadProgressToastProvider />
-
-                              {/* RK distributions skip bundled-model onboarding. */}
-                              <div className="flex">
-                                <Sidebar />
-                                <MainContent>{children}</MainContent>
-                              </div>
-                              {/* Import audio overlay and dialog */}
-                              <ImportDropOverlay visible={showDropOverlay} />
-                              <ConditionalImportDialog
-                                showImportDialog={showImportDialog}
-                                handleImportDialogClose={handleImportDialogClose}
-                                importFilePath={importFilePath}
-                              />
-                            </ImportDialogProvider>
-                          </RecordingPostProcessingProvider>
-                        </TooltipProvider>
-                      </SidebarProvider>
-                    </UpdateCheckProvider>
-                  </OnboardingProvider>
-
-                </OllamaDownloadProvider>
-              </ConfigProvider>
-            </TranscriptProvider>
-          </RecordingStateProvider>
-        </AnalyticsProvider>
-
+        <HYOSAccessGate>
+          <AuthenticatedApplication>{children}</AuthenticatedApplication>
+        </HYOSAccessGate>
         <Toaster position="bottom-center" richColors closeButton />
       </body>
     </html>

@@ -36,6 +36,7 @@ pub(crate) use perf_trace;
 
 // Declare audio module
 pub mod analytics;
+pub mod access_control;
 pub mod api;
 pub mod audio;
 pub mod config;
@@ -632,6 +633,14 @@ pub fn run() {
             anthropic::anthropic::get_anthropic_models,
             groq::groq::get_groq_models,
             api::api_get_meetings,
+            access_control::get_admin_status,
+            access_control::initialize_admin_password,
+            access_control::verify_admin_password,
+            access_control::change_admin_password,
+            access_control::set_meeting_password,
+            access_control::verify_meeting_password,
+            access_control::reset_meeting_password,
+            access_control::export_meeting_text,
             api::api_search_transcripts,
             api::api_get_profile,
             api::api_save_profile,
