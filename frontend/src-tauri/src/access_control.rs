@@ -3,14 +3,18 @@ use argon2::{
     Argon2,
 };
 use chrono::Utc;
+use once_cell::sync::Lazy;
 use serde::Serialize;
-use tauri::State;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
+use tauri::State;
 
 use crate::state::AppState;
 
-const DEFAULT_ADMIN_PASSWORD: &str = "mihui2026";
+static ADMIN_AUTHENTICATED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+static UNLOCKED_MEETINGS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Serialize)]
 pub struct AdminStatus {
@@ -30,7 +34,10 @@ fn hash_password(password: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hash_password, summary_markdown, verify_password};
+    use super::{
+        hash_password, require_meeting_unlocked, summary_markdown, verify_password,
+        UNLOCKED_MEETINGS,
+    };
 
     #[test]
     fn password_hash_is_salted_and_verifiable() {
@@ -50,17 +57,43 @@ mod tests {
     }
 
     #[test]
+    fn uninitialized_empty_hash_never_verifies() {
+        assert!(!verify_password("any-password", ""));
+    }
+
+    #[test]
+    fn meeting_content_requires_an_unlocked_session() {
+        let meeting_id = "access-control-test-meeting";
+        UNLOCKED_MEETINGS.lock().unwrap().remove(meeting_id);
+        assert!(require_meeting_unlocked(meeting_id).is_err());
+        UNLOCKED_MEETINGS
+            .lock()
+            .unwrap()
+            .insert(meeting_id.to_string());
+        assert!(require_meeting_unlocked(meeting_id).is_ok());
+        UNLOCKED_MEETINGS.lock().unwrap().remove(meeting_id);
+    }
+
+    #[test]
     fn summary_export_uses_rendered_markdown_instead_of_json() {
-        let raw = r###"{"markdown":"## 决策\n保持本地处理","english_cache":{"markdown":"ignored"}}"###;
+        let raw =
+            r###"{"markdown":"## 决策\n保持本地处理","english_cache":{"markdown":"ignored"}}"###;
         assert_eq!(summary_markdown(raw), "## 决策\n保持本地处理");
         assert_eq!(summary_markdown("已有纯文本总结"), "已有纯文本总结");
     }
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
+    if hash.trim().is_empty() {
+        return false;
+    }
     PasswordHash::new(hash)
         .ok()
-        .and_then(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).ok())
+        .and_then(|parsed| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .ok()
+        })
         .is_some()
 }
 
@@ -84,16 +117,17 @@ async fn ensure_admin_row(state: &State<'_, AppState>) -> Result<(String, bool),
         return Ok((hash, initialized));
     }
 
-    let hash = hash_password(DEFAULT_ADMIN_PASSWORD)?;
+    // Keep the uninitialized row unusable until the operator chooses a password.
+    // No bootstrap password is stored in the binary or repository.
     sqlx::query(
         "INSERT INTO local_admin_credentials (id, password_hash, initialized, updated_at) VALUES (1, ?, 0, ?)",
     )
-    .bind(&hash)
+    .bind("")
     .bind(Utc::now().to_rfc3339())
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
-    Ok((hash, false))
+    Ok((String::new(), false))
 }
 
 #[tauri::command]
@@ -105,15 +139,11 @@ pub async fn get_admin_status(state: State<'_, AppState>) -> Result<AdminStatus,
 #[tauri::command]
 pub async fn initialize_admin_password(
     state: State<'_, AppState>,
-    initial_password: String,
     new_password: String,
 ) -> Result<(), String> {
-    let (hash, initialized) = ensure_admin_row(&state).await?;
+    let (_, initialized) = ensure_admin_row(&state).await?;
     if initialized {
         return Err("管理员已经完成初始化".to_string());
-    }
-    if !verify_password(&initial_password, &hash) {
-        return Err("初始密码不正确".to_string());
     }
     let new_hash = hash_password(&new_password)?;
     sqlx::query("UPDATE local_admin_credentials SET password_hash = ?, initialized = 1, updated_at = ? WHERE id = 1")
@@ -122,13 +152,28 @@ pub async fn initialize_admin_password(
         .execute(state.db_manager.pool())
         .await
         .map_err(|error| error.to_string())?;
+    *ADMIN_AUTHENTICATED
+        .lock()
+        .map_err(|_| "安全状态不可用".to_string())? = true;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn verify_admin_password(state: State<'_, AppState>, password: String) -> Result<bool, String> {
-    let (hash, _) = ensure_admin_row(&state).await?;
-    Ok(verify_password(&password, &hash))
+pub async fn verify_admin_password(
+    state: State<'_, AppState>,
+    password: String,
+) -> Result<bool, String> {
+    let (hash, initialized) = ensure_admin_row(&state).await?;
+    if !initialized {
+        return Ok(false);
+    }
+    let valid = verify_password(&password, &hash);
+    if valid {
+        *ADMIN_AUTHENTICATED
+            .lock()
+            .map_err(|_| "安全状态不可用".to_string())? = true;
+    }
+    Ok(valid)
 }
 
 #[tauri::command]
@@ -148,7 +193,48 @@ pub async fn change_admin_password(
         .execute(state.db_manager.pool())
         .await
         .map_err(|error| error.to_string())?;
+    *ADMIN_AUTHENTICATED
+        .lock()
+        .map_err(|_| "安全状态不可用".to_string())? = true;
     Ok(())
+}
+
+fn admin_is_authenticated() -> Result<bool, String> {
+    ADMIN_AUTHENTICATED
+        .lock()
+        .map(|authenticated| *authenticated)
+        .map_err(|_| "安全状态不可用".to_string())
+}
+
+pub fn require_meeting_unlocked(meeting_id: &str) -> Result<(), String> {
+    UNLOCKED_MEETINGS
+        .lock()
+        .map_err(|_| "安全状态不可用".to_string())?
+        .contains(meeting_id)
+        .then_some(())
+        .ok_or_else(|| "请先验证会议密码".to_string())
+}
+
+pub fn is_meeting_unlocked(meeting_id: &str) -> bool {
+    UNLOCKED_MEETINGS
+        .lock()
+        .map(|meetings| meetings.contains(meeting_id))
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub async fn meeting_uses_independent_password(
+    state: State<'_, AppState>,
+    meeting_id: String,
+) -> Result<bool, String> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT CASE WHEN password_hash IS NOT NULL AND uses_admin_password = 0 THEN 1 ELSE 0 END FROM meeting_access_credentials WHERE meeting_id = ?",
+    )
+        .bind(meeting_id)
+        .fetch_optional(state.db_manager.pool())
+        .await
+        .map_err(|_| "安全状态不可用".to_string())
+        .map(|value| value.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -157,6 +243,9 @@ pub async fn set_meeting_password(
     meeting_id: String,
     password: Option<String>,
 ) -> Result<(), String> {
+    if !admin_is_authenticated()? {
+        return Err("需要管理员登录后才能设置会议密码".to_string());
+    }
     let password = password.filter(|value| !value.trim().is_empty());
     let password_hash = password.as_deref().map(hash_password).transpose()?;
     let uses_admin = password_hash.is_none();
@@ -186,10 +275,17 @@ pub async fn verify_meeting_password(
     .fetch_optional(state.db_manager.pool())
     .await
     .map_err(|error| error.to_string())?;
-    match credential {
-        Some((Some(hash), false)) => Ok(verify_password(&password, &hash)),
-        _ => verify_admin_password(state, password).await,
+    let valid = match credential {
+        Some((Some(hash), false)) => verify_password(&password, &hash),
+        _ => verify_admin_password(state, password).await?,
+    };
+    if valid {
+        UNLOCKED_MEETINGS
+            .lock()
+            .map_err(|_| "安全状态不可用".to_string())?
+            .insert(meeting_id);
     }
+    Ok(valid)
 }
 
 #[tauri::command]
@@ -203,11 +299,18 @@ pub async fn reset_meeting_password(
     if !verify_password(&admin_password, &admin_hash) {
         return Err("管理员密码不正确".to_string());
     }
+    *ADMIN_AUTHENTICATED
+        .lock()
+        .map_err(|_| "安全状态不可用".to_string())? = true;
     set_meeting_password(state, meeting_id, Some(new_password)).await
 }
 
 #[tauri::command]
-pub async fn export_meeting_text(state: State<'_, AppState>, meeting_id: String) -> Result<String, String> {
+pub async fn export_meeting_text(
+    state: State<'_, AppState>,
+    meeting_id: String,
+) -> Result<String, String> {
+    require_meeting_unlocked(&meeting_id)?;
     let pool = state.db_manager.pool();
     let meeting = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT title, folder_path FROM meetings WHERE id = ?",
@@ -217,7 +320,9 @@ pub async fn export_meeting_text(state: State<'_, AppState>, meeting_id: String)
     .await
     .map_err(|error| error.to_string())?
     .ok_or_else(|| "会议文件不存在".to_string())?;
-    let folder_path = meeting.1.ok_or_else(|| "本次会议没有可用的本地录音目录".to_string())?;
+    let folder_path = meeting
+        .1
+        .ok_or_else(|| "本次会议没有可用的本地录音目录".to_string())?;
     let transcripts = sqlx::query_as::<_, (String, String)>(
         "SELECT timestamp, transcript FROM transcripts WHERE meeting_id = ? ORDER BY COALESCE(audio_start_time, 0), timestamp",
     )

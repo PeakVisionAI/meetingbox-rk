@@ -369,6 +369,10 @@ pub async fn api_search_transcripts<R: Runtime>(
 
     match TranscriptsRepository::search_transcripts(pool, &query).await {
         Ok(results) => {
+            let results: Vec<_> = results
+                .into_iter()
+                .filter(|result| crate::access_control::is_meeting_unlocked(&result.id))
+                .collect();
             log_info!(
                 "Search completed successfully with {} results.",
                 results.len()
@@ -784,6 +788,7 @@ pub async fn api_get_meeting<R: Runtime>(
     state: tauri::State<'_, AppState>,
     auth_token: Option<String>,
 ) -> Result<MeetingDetails, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!(
         "api_get_meeting called(native) for meeting_id: {}, auth_token: {}",
         meeting_id,
@@ -815,6 +820,7 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
     meeting_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<MeetingMetadata, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
 
     let pool = state.db_manager.pool();
@@ -850,6 +856,7 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
     offset: i64,
     state: tauri::State<'_, AppState>,
 ) -> Result<PaginatedTranscriptsResponse, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!(
         "api_get_meeting_transcripts called for meeting_id: {}, limit: {}, offset: {}",
         meeting_id,
@@ -1010,6 +1017,7 @@ pub async fn open_meeting_folder<R: Runtime>(
     state: tauri::State<'_, AppState>,
     meeting_id: String,
 ) -> Result<(), String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!("open_meeting_folder called for meeting_id: {}", meeting_id);
 
     let pool = state.db_manager.pool();

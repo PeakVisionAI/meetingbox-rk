@@ -40,6 +40,12 @@ export interface VirtualizedTranscriptViewProps {
 // Threshold for enabling virtualization (below this, use simple rendering)
 const VIRTUALIZATION_THRESHOLD = 10;
 
+function splitSpeakerPrefix(text: string, explicitLabel?: string): { speakerLabel?: string; text: string } {
+    if (explicitLabel) return { speakerLabel: explicitLabel, text };
+    const match = text.match(/^(发言人[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
+    return match ? { speakerLabel: match[1], text: match[2] } : { text };
+}
+
 // Helper function to format seconds as recording-relative time [MM:SS]
 function formatRecordingTime(seconds: number | undefined): string {
     if (seconds === undefined) return '[--:--]';
@@ -70,6 +76,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     timestamp,
     text,
     confidence,
+    speakerLabel,
     isStreaming,
     showConfidence,
 }: {
@@ -77,10 +84,12 @@ const TranscriptSegment = memo(function TranscriptSegment({
     timestamp: number;
     text: string;
     confidence?: number;
+    speakerLabel?: string;
     isStreaming: boolean;
     showConfidence: boolean;
 }) {
-    const displayText = cleanStopWords(text) || (text.trim() === '' ? uiText.silence : text);
+    const parsed = splitSpeakerPrefix(text, speakerLabel);
+    const displayText = cleanStopWords(parsed.text) || (parsed.text.trim() === '' ? uiText.silence : parsed.text);
 
     return (
         <div id={`segment-${id}`} className="mb-3">
@@ -98,6 +107,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                     </TooltipContent>
                 </Tooltip>
                 <div className="flex-1">
+                    {parsed.speakerLabel && <div className="mb-1 text-xs font-semibold text-blue-700">{parsed.speakerLabel}</div>}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
@@ -291,6 +301,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
                                         confidence={segment.confidence}
+                                        speakerLabel={segment.speakerLabel}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                     />
@@ -347,6 +358,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
                                         confidence={segment.confidence}
+                                        speakerLabel={segment.speakerLabel}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                     />

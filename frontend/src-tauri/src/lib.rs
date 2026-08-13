@@ -641,6 +641,7 @@ pub fn run() {
             access_control::verify_meeting_password,
             access_control::reset_meeting_password,
             access_control::export_meeting_text,
+            access_control::meeting_uses_independent_password,
             api::api_search_transcripts,
             api::api_get_profile,
             api::api_save_profile,

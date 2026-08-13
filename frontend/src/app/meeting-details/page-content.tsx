@@ -17,7 +17,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
-import { Download, FileAudio, Files, ArrowLeft } from 'lucide-react';
+import { Download, FolderOpen, ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { accessControlService } from '@/services/accessControlService';
 
@@ -179,7 +179,7 @@ export default function PageContent({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="hyos-details-page"
     >
-      <div className="hyos-details-head"><div><button className="hyos-back" onClick={() => router.push('/files')}><ArrowLeft size={16} />返回文件管理</button><h1>{meetingData.meetingTitle}</h1><p>{new Date(meeting.created_at).toLocaleString('zh-CN', { hour12: false })} · 本地会议成果</p></div><div className="hyos-download-actions"><button className="hyos-secondary" onClick={exportText}><Download size={15} />下载文字</button><button className="hyos-secondary" onClick={meetingOperations.handleOpenMeetingFolder}><FileAudio size={15} />下载录音</button><button className="hyos-primary" onClick={async () => { await exportText(); await meetingOperations.handleOpenMeetingFolder(); }}><Files size={15} />下载全部</button></div></div>
+      <div className="hyos-details-head"><div><button className="hyos-back" onClick={() => router.push('/files')}><ArrowLeft size={16} />返回文件管理</button><h1>{meetingData.meetingTitle}</h1><p>{new Date(meeting.created_at).toLocaleString('zh-CN', { hour12: false })} · 本地会议成果</p></div><div className="hyos-download-actions"><button className="hyos-secondary" onClick={exportText}><Download size={15} />导出文字</button><button className="hyos-primary" onClick={meetingOperations.handleOpenMeetingFolder}><FolderOpen size={15} />打开录音位置</button></div></div>
       <div className="hyos-details-body">
         <TranscriptPanel
           transcripts={meetingData.transcripts}

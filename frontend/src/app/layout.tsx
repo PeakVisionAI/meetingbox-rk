@@ -85,10 +85,8 @@ function AuthenticatedApplication({
     const unlisten = listen('request-recording-toggle', () => {
       console.log('[Layout] Received request-recording-toggle from tray');
 
-      // RK distributions enter the application directly. Backend availability is
-      // reported by the configured inference provider, not by model onboarding.
-      console.log('[Layout] Forwarding to start-recording-from-sidebar');
-      window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+      sessionStorage.setItem('autoStartRecording', 'true');
+      window.location.assign('/');
     });
 
     return () => {
