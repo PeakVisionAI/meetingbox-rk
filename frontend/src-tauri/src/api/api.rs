@@ -1092,6 +1092,9 @@ pub async fn get_meeting_audio_path<R: Runtime>(
     meeting_id: String,
 ) -> Result<String, String> {
     crate::access_control::require_meeting_unlocked(&meeting_id)?;
+    if !is_safe_meeting_id(&meeting_id) {
+        return Err("无效的会议编号".to_string());
+    }
 
     let pool = state.db_manager.pool();
     let meeting: Option<MeetingModel> = sqlx::query_as(
@@ -1148,6 +1151,48 @@ pub async fn get_meeting_audio_path<R: Runtime>(
     }
 
     Ok(destination.to_string_lossy().to_string())
+}
+
+fn is_safe_meeting_id(meeting_id: &str) -> bool {
+    !meeting_id.is_empty()
+        && !meeting_id.contains('/')
+        && !meeting_id.contains('\\')
+        && !meeting_id.contains("..")
+}
+
+/// Remove the playback cache copy after the details page unmounts.
+#[tauri::command]
+pub async fn release_meeting_audio_path<R: Runtime>(
+    app: AppHandle<R>,
+    meeting_id: String,
+) -> Result<(), String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
+    if !is_safe_meeting_id(&meeting_id) {
+        return Err("无效的会议编号".to_string());
+    }
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法定位应用数据目录: {}", e))?;
+    let playback_dir = app_data_dir.join("playback");
+    if !playback_dir.is_dir() {
+        return Ok(());
+    }
+
+    let prefix = format!("{}.", meeting_id);
+    if let Ok(entries) = std::fs::read_dir(&playback_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if name.starts_with(&prefix) && path.is_file() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 // Simple test command to check backend connectivity

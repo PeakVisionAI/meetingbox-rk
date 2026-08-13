@@ -35,7 +35,7 @@
             "assetProtocol": {
                 "enable": true,
                 "scope": [
-                    "$APPDATA/**"
+                    "$APPDATA/playback/**"
                 ]
             },
             "capabilities": [

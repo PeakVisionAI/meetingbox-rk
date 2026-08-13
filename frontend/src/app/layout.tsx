@@ -80,20 +80,6 @@ function AuthenticatedApplication({
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])
-  useEffect(() => {
-    // Listen for tray recording toggle request
-    const unlisten = listen('request-recording-toggle', () => {
-      console.log('[Layout] Received request-recording-toggle from tray');
-
-      sessionStorage.setItem('autoStartRecording', 'true');
-      window.location.assign('/');
-    });
-
-    return () => {
-      unlisten.then(fn => fn());
-    };
-  }, []);
-
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
     // Find the first audio file

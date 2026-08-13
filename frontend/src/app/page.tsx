@@ -140,7 +140,7 @@ export default function Home() {
 
       {showLive && (
         <section className="hyos-live-page">
-          <div className="hyos-live-heading"><button className="hyos-back" onClick={() => router.push('/')}>← 返回工作台</button><h1>{meetingTitle || '日常会议'}</h1></div>
+          <div className="hyos-live-heading"><h1>{meetingTitle || '日常会议'}</h1></div>
           <div className="hyos-live-meta"><span className="hyos-live-record"><i />{recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS ? '正在处理' : '正在录音'}</span><span>会议时间 <b>{new Date().toLocaleString('zh-CN', { hour12: false }).slice(0, 16)}</b></span><span>当前时长 <b>{formatClock(recordingState.activeDuration)}</b></span><span>已识别发言人 <b>{speakerCountLabel}</b></span><span>内容分段 <b>{transcripts.length} 段</b></span><span className="hyos-live-local">转写中</span></div>
           <div className="hyos-live-grid">
             <div className="hyos-transcript-pane"><div className="hyos-pane-title"><span>逐字稿</span><em>{transcripts.length} 段</em></div><div className="hyos-transcript-virtual"><VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} /></div></div>

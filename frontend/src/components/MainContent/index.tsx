@@ -1,12 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePathname, useRouter } from 'next/navigation';
-import { Settings, Play, Square } from 'lucide-react';
+import { Settings, Play } from 'lucide-react';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
-import { invoke } from '@tauri-apps/api/core';
-import { appDataDir } from '@tauri-apps/api/path';
+import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 
 interface MainContentProps {
@@ -21,6 +20,10 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   const isHome = pathname === '/';
   const isSettings = pathname === '/settings';
   const recordingActive = recordingState.isRecording || recordingState.isStopping || recordingState.isProcessing || recordingState.isSaving;
+  const recordingActiveRef = useRef(recordingActive);
+  const isHomeRef = useRef(isHome);
+  recordingActiveRef.current = recordingActive;
+  isHomeRef.current = isHome;
 
   const openSettings = () => {
     if (recordingActive) {
@@ -30,17 +33,42 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
     router.push('/settings');
   };
 
-  const stopRecording = async () => {
-    if (!window.confirm('确认结束并保存当前会议？')) return;
-    try {
-      const dataDir = await appDataDir();
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      await invoke('stop_recording', { args: { save_path: `${dataDir}/recording-${timestamp}.wav` } });
-      (window as any).handleRecordingStop?.(true);
-    } catch (error) {
-      toast.error('无法结束会议', { description: String(error) });
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const setup = async () => {
+      try {
+        const stop = await listen('request-start-recording', () => {
+          if (recordingActiveRef.current) {
+            sessionStorage.removeItem('autoStartRecording');
+            if (!isHomeRef.current) router.push('/');
+            return;
+          }
+          if (isHomeRef.current) {
+            sessionStorage.removeItem('autoStartRecording');
+            window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+            return;
+          }
+          sessionStorage.setItem('autoStartRecording', 'true');
+          router.push('/');
+        });
+        if (cancelled) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+      } catch (error) {
+        console.warn('[MainContent] Tray start listener unavailable:', error);
+      }
+    };
+
+    void setup();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [router]);
 
   return (
     <main className="hyos-main">
@@ -49,7 +77,13 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
           <span>智能会议助手</span><i>-</i><b>HYOS</b>
         </button>
         <div className="hyos-topbar-actions">
-          {recordingActive && !isHome && <div className="hyos-recording-actions"><button onClick={() => router.push('/')}><Play size={14} />返回会议</button><button className="danger" onClick={stopRecording} disabled={!recordingState.isRecording}><Square size={14} />结束会议</button></div>}
+          {recordingActive && !isHome && (
+            <div className="hyos-recording-actions">
+              <button onClick={() => router.push('/')}>
+                <Play size={14} />返回会议
+              </button>
+            </div>
+          )}
           <button className={`hyos-settings-button${isSettings ? ' active' : ''}`} onClick={openSettings} disabled={recordingActive} title={recordingActive ? '会议进行中，请先结束会议' : '设置'}><Settings size={16} />设置</button>
           <div className="hyos-user"><span className={isMeetingActive ? 'recording-dot' : 'status-dot'} />{isMeetingActive ? '会议进行中' : '已登录'}</div>
         </div>

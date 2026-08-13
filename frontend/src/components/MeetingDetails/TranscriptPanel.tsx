@@ -91,7 +91,7 @@ export function TranscriptPanel({
               type="button"
               className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white disabled:cursor-not-allowed disabled:bg-slate-300"
               onClick={() => audioPlayer.toggle()}
-              disabled={!audioPlayer.audioPath || audioPlayer.isLoading}
+              disabled={audioPlayer.isLoading}
               title={audioPlayer.isPlaying ? '暂停录音' : '播放录音'}
               aria-label={audioPlayer.isPlaying ? '暂停录音' : '播放录音'}
             >
@@ -113,6 +113,7 @@ export function TranscriptPanel({
             </span>
           </div>
           {audioPlayer.error && <p className="mt-2 text-xs text-amber-600">{audioPlayer.error}</p>}
+          {!audioPlayer.error && !audioPlayer.audioPath && <p className="mt-2 text-[11px] text-slate-400">点击播放后加载本次会议录音</p>}
           {!audioPlayer.error && audioPlayer.audioPath && <p className="mt-2 text-[11px] text-slate-400">点击逐字稿右侧耳机按钮，从对应时间开始播放</p>}
         </div>
       </div>

@@ -5,6 +5,8 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const endTimeRef = useRef<number | null>(null);
+  const loadPromiseRef = useRef<Promise<HTMLAudioElement> | null>(null);
+  const aliveRef = useRef(true);
   const [audioPath, setAudioPath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -12,83 +14,118 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!meetingId) return;
-    let cancelled = false;
-    setIsLoading(true);
-    setError(null);
+  const detachAudio = useCallback(() => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    loadPromiseRef.current = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setAudioPath(null);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, []);
 
-    const load = async () => {
+  const attachAudio = useCallback((path: string) => {
+    const url = convertFileSrc(path);
+    const audio = new Audio(url);
+    audio.preload = 'metadata';
+    audio.addEventListener('loadedmetadata', () => {
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+    });
+    audio.addEventListener('timeupdate', () => {
+      setCurrentTime(audio.currentTime);
+      const end = endTimeRef.current;
+      if (end !== null && audio.currentTime >= end) {
+        audio.pause();
+        audio.currentTime = end;
+        endTimeRef.current = null;
+        setIsPlaying(false);
+      }
+    });
+    audio.addEventListener('play', () => setIsPlaying(true));
+    audio.addEventListener('pause', () => setIsPlaying(false));
+    audio.addEventListener('ended', () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+      endTimeRef.current = null;
+    });
+    audio.addEventListener('error', () => {
+      setError(`录音无法解码（${audio.error?.code ?? 'unknown'}）`);
+    });
+    audioRef.current = audio;
+    setAudioPath(path);
+    return audio;
+  }, []);
+
+  const ensureAudio = useCallback(async () => {
+    if (audioRef.current) return audioRef.current;
+    if (loadPromiseRef.current) return loadPromiseRef.current;
+    if (!meetingId) {
+      throw new Error('未选择会议');
+    }
+
+    const load = (async () => {
+      setIsLoading(true);
+      setError(null);
       try {
-          const path = await invoke<string>('get_meeting_audio_path', { meetingId });
-          if (cancelled || !path) return;
-          const url = convertFileSrc(path);
-          const audio = new Audio(url);
-          audio.preload = 'metadata';
-          audio.addEventListener('loadedmetadata', () => {
-            if (!cancelled) setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-          });
-          audio.addEventListener('timeupdate', () => {
-            if (cancelled) return;
-            setCurrentTime(audio.currentTime);
-            const end = endTimeRef.current;
-            if (end !== null && audio.currentTime >= end) {
-              audio.pause();
-              audio.currentTime = end;
-              endTimeRef.current = null;
-              setIsPlaying(false);
-            }
-          });
-          audio.addEventListener('play', () => setIsPlaying(true));
-          audio.addEventListener('pause', () => setIsPlaying(false));
-          audio.addEventListener('ended', () => {
-            setIsPlaying(false);
-            setCurrentTime(0);
-            endTimeRef.current = null;
-          });
-          audio.addEventListener('error', () => {
-            if (!cancelled) setError(`录音无法解码（${audio.error?.code ?? 'unknown'}）`);
-          });
-          audioRef.current = audio;
-          setAudioPath(path);
-          setIsLoading(false);
-          return;
+        const path = await invoke<string>('get_meeting_audio_path', { meetingId });
+        if (!aliveRef.current) {
+          void invoke('release_meeting_audio_path', { meetingId }).catch(() => {});
+          throw new Error('录音播放已取消');
+        }
+        if (!path) {
+          throw new Error('未找到本次会议的录音文件');
+        }
+        return attachAudio(path);
       } catch (loadError) {
         console.error('Failed to prepare meeting audio:', loadError);
-      }
-      if (!cancelled) {
         setError('未找到本次会议的录音文件');
+        throw loadError;
+      } finally {
         setIsLoading(false);
+        loadPromiseRef.current = null;
+      }
+    })();
+    loadPromiseRef.current = load;
+    return load;
+  }, [attachAudio, meetingId]);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      detachAudio();
+      if (meetingId) {
+        void invoke('release_meeting_audio_path', { meetingId }).catch(() => {});
       }
     };
-
-    load();
-    return () => {
-      cancelled = true;
-      audioRef.current?.pause();
-      audioRef.current = null;
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-      setAudioPath(null);
-    };
-  }, [meetingId]);
+  }, [detachAudio, meetingId]);
 
   const playSegment = useCallback(async (start: number, end?: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const safeStart = Math.max(0, start || 0);
-    endTimeRef.current = end !== undefined && end > safeStart ? end : null;
-    if (Math.abs(audio.currentTime - safeStart) > 0.25) audio.currentTime = safeStart;
-    await audio.play();
-  }, []);
+    try {
+      const audio = await ensureAudio();
+      const safeStart = Math.max(0, start || 0);
+      endTimeRef.current = end !== undefined && end > safeStart ? end : null;
+      if (Math.abs(audio.currentTime - safeStart) > 0.25) audio.currentTime = safeStart;
+      await audio.play();
+    } catch (playError) {
+      console.error('Failed to play meeting audio segment:', playError);
+    }
+  }, [ensureAudio]);
 
   const toggle = useCallback(async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    endTimeRef.current = null;
-    if (audio.paused) await audio.play();
-    else audio.pause();
-  }, []);
+    try {
+      const audio = await ensureAudio();
+      endTimeRef.current = null;
+      if (audio.paused) await audio.play();
+      else audio.pause();
+    } catch (playError) {
+      console.error('Failed to toggle meeting audio:', playError);
+    }
+  }, [ensureAudio]);
 
   const seek = useCallback((value: number) => {
     const audio = audioRef.current;
