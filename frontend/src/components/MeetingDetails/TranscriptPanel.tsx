@@ -52,7 +52,7 @@ export function TranscriptPanel({
   meetingFolderPath,
   onRefetchTranscripts,
 }: TranscriptPanelProps) {
-  const audioPlayer = useMeetingAudioPlayer(meetingFolderPath);
+  const audioPlayer = useMeetingAudioPlayer(meetingId);
   // Convert transcripts to segments if pagination is not used but we want virtualization
   const convertedSegments = useMemo(() => {
     if (usePagination && segments) {

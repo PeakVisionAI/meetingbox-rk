@@ -1,23 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
-const AUDIO_CANDIDATES = [
-  'audio.mp4', 'audio.m4a', 'audio.wav', 'audio.mp3', 'audio.flac',
-  'audio.ogg', 'recording.mp4', 'audio.mkv', 'audio.webm', 'audio.wma',
-];
-
-function mimeType(path: string) {
-  const extension = path.split('.').pop()?.toLowerCase();
-  if (extension === 'wav') return 'audio/wav';
-  if (extension === 'mp3') return 'audio/mpeg';
-  if (extension === 'm4a' || extension === 'mp4') return 'audio/mp4';
-  if (extension === 'ogg') return 'audio/ogg';
-  if (extension === 'webm') return 'audio/webm';
-  if (extension === 'flac') return 'audio/flac';
-  return 'application/octet-stream';
-}
-
-export function useMeetingAudioPlayer(folderPath?: string | null) {
+export function useMeetingAudioPlayer(meetingId?: string | null) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const endTimeRef = useRef<number | null>(null);
@@ -29,18 +13,16 @@ export function useMeetingAudioPlayer(folderPath?: string | null) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!folderPath) return;
+    if (!meetingId) return;
     let cancelled = false;
     setIsLoading(true);
     setError(null);
 
     const load = async () => {
-      for (const name of AUDIO_CANDIDATES) {
-        try {
-          const path = `${folderPath.replace(/[\\/]$/, '')}/${name}`;
-          const bytes = await invoke<number[]>('read_audio_file', { filePath: path });
-          if (cancelled || !bytes?.length) continue;
-          const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mimeType(path) }));
+      try {
+          const path = await invoke<string>('get_meeting_audio_path', { meetingId });
+          if (cancelled || !path) return;
+          const url = convertFileSrc(path);
           const audio = new Audio(url);
           audio.preload = 'metadata';
           audio.addEventListener('loadedmetadata', () => {
@@ -64,14 +46,15 @@ export function useMeetingAudioPlayer(folderPath?: string | null) {
             setCurrentTime(0);
             endTimeRef.current = null;
           });
+          audio.addEventListener('error', () => {
+            if (!cancelled) setError(`录音无法解码（${audio.error?.code ?? 'unknown'}）`);
+          });
           audioRef.current = audio;
-          objectUrlRef.current = url;
           setAudioPath(path);
           setIsLoading(false);
           return;
-        } catch {
-          // Try the next known recording name; missing candidates are expected.
-        }
+      } catch (loadError) {
+        console.error('Failed to prepare meeting audio:', loadError);
       }
       if (!cancelled) {
         setError('未找到本次会议的录音文件');
@@ -88,7 +71,7 @@ export function useMeetingAudioPlayer(folderPath?: string | null) {
       objectUrlRef.current = null;
       setAudioPath(null);
     };
-  }, [folderPath]);
+  }, [meetingId]);
 
   const playSegment = useCallback(async (start: number, end?: number) => {
     const audio = audioRef.current;
