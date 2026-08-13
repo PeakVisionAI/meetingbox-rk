@@ -3,7 +3,7 @@
 import React from 'react';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePathname, useRouter } from 'next/navigation';
-import { Settings, FileText, Play, Square } from 'lucide-react';
+import { Settings, Play, Square } from 'lucide-react';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { invoke } from '@tauri-apps/api/core';
 import { appDataDir } from '@tauri-apps/api/path';
@@ -19,16 +19,15 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   const { isMeetingActive } = useSidebar();
   const recordingState = useRecordingState();
   const isHome = pathname === '/';
-  const isFiles = pathname === '/files';
   const isSettings = pathname === '/settings';
   const recordingActive = recordingState.isRecording || recordingState.isStopping || recordingState.isProcessing || recordingState.isSaving;
 
-  const goTo = (path: string) => {
-    if (recordingActive && path !== '/') {
+  const openSettings = () => {
+    if (recordingActive) {
       toast.info('会议进行中，请先结束会议');
       return;
     }
-    router.push(path);
+    router.push('/settings');
   };
 
   const stopRecording = async () => {
@@ -49,12 +48,11 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
         <button className="hyos-brand" onClick={() => router.push('/')} aria-label="返回工作台">
           <span>智能会议助手</span><i>-</i><b>HYOS</b>
         </button>
-        <nav className="hyos-nav" aria-label="主功能导航">
-          <button className={isHome ? 'active' : ''} onClick={() => goTo('/')}><Play size={15} />{recordingActive ? '当前会议' : '快速会议'}</button>
-          <button className={isFiles ? 'active' : ''} onClick={() => goTo('/files')} disabled={recordingActive}><FileText size={15} />文件管理</button>
-          <button className={isSettings ? 'active' : ''} onClick={() => goTo('/settings')} disabled={recordingActive}><Settings size={15} />设置</button>
-        </nav>
-        {recordingActive && !isHome ? <div className="hyos-recording-actions"><button onClick={() => router.push('/')}><Play size={14} />返回会议</button><button className="danger" onClick={stopRecording} disabled={!recordingState.isRecording}><Square size={14} />结束会议</button></div> : <div className="hyos-user"><span className={isMeetingActive ? 'recording-dot' : 'status-dot'} />{isMeetingActive ? '会议进行中' : '已登录'}</div>}
+        <div className="hyos-topbar-actions">
+          {recordingActive && !isHome && <div className="hyos-recording-actions"><button onClick={() => router.push('/')}><Play size={14} />返回会议</button><button className="danger" onClick={stopRecording} disabled={!recordingState.isRecording}><Square size={14} />结束会议</button></div>}
+          <button className={`hyos-settings-button${isSettings ? ' active' : ''}`} onClick={openSettings} disabled={recordingActive} title={recordingActive ? '会议进行中，请先结束会议' : '设置'}><Settings size={16} />设置</button>
+          <div className="hyos-user"><span className={isMeetingActive ? 'recording-dot' : 'status-dot'} />{isMeetingActive ? '会议进行中' : '已登录'}</div>
+        </div>
       </header>
       <div className="hyos-content">{children}</div>
     </main>

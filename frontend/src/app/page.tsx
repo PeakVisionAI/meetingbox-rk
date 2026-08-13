@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileText, LockKeyhole, Mic, Play, Settings, Wifi } from 'lucide-react';
+import { FileText, Play } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
@@ -128,14 +128,11 @@ export default function Home() {
         <>
           <section className="hyos-launcher" aria-label="会议工作台">
             <button className="hyos-launch primary" onClick={() => setQuickMeetingOpen(true)}><span><Play size={21} /></span><strong>快速会议</strong><small>开始会议记录</small></button>
-            <button className="hyos-launch" onClick={() => router.push('/files')}><span><FileText size={21} /></span><strong>文件管理</strong><small>查看会议文件</small></button>
-            <button className="hyos-launch" onClick={() => router.push('/settings')}><span><Settings size={21} /></span><strong>设置</strong><small>设备与版本管理</small></button>
+            <button className="hyos-launch" onClick={() => router.push('/files')}><span><FileText size={21} /></span><strong>会议管理</strong><small>查看和管理会议资料</small></button>
           </section>
-          <section className="hyos-home-grid">
-            <div className="hyos-panel hyos-recent"><div className="hyos-panel-head"><h2>最近会议</h2><button onClick={() => router.push('/files')}>查看全部</button></div>
-              {meetings.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : meetings.slice(0, 2).map((meeting) => <button key={meeting.id} className="hyos-record-row" onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}><span className="hyos-record-icon">会</span><span><b>{meeting.title}</b><small>本地会议文件</small></span><em>已完成</em></button>)}
-            </div>
-            <div className="hyos-security"><LockKeyhole size={21} /><b>资料仅保存在本机</b><p>会议密码用于界面访问控制，不等同于磁盘文件加密。</p><span><Wifi size={14} /> 本地服务正常</span></div>
+          <section className="hyos-panel hyos-recent">
+            <div className="hyos-panel-head"><h2>最近会议</h2><button onClick={() => router.push('/files')}>查看全部</button></div>
+            {meetings.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : meetings.slice(0, 3).map((meeting) => <button key={meeting.id} className="hyos-record-row" onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}><span className="hyos-record-icon">会</span><span><b>{meeting.title}</b><small>本地会议文件</small></span><em>已完成</em></button>)}
           </section>
           <div className="hyos-device-strip"><div><b>设备状态</b><span><i />本地运行</span></div><div><span>本地模型服务</span><strong>已配置</strong></div><div><span>会议麦克风</span><strong>{selectedDevices.micDevice || '系统默认'}</strong></div><div><span>会议资料</span><strong>本地保存</strong></div></div>
         </>
