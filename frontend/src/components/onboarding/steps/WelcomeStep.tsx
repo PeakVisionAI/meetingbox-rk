@@ -3,6 +3,7 @@ import { Lock, Sparkles, Cpu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { uiText } from '@/lib/uiText';
 
 export function WelcomeStep() {
   const { goNext } = useOnboarding();

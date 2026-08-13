@@ -107,8 +107,10 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
             log::info!("Emitting start recording event from tray");
             if let Some(window) = app_clone.get_webview_window("main") {
-                let _ = window.eval("sessionStorage.setItem('autoStartRecording', 'true')"); // Set the flag to start recording automatically
-                let _ = window.eval("window.location.assign('/')");
+                let _ = window.eval("sessionStorage.setItem('autoStartRecording', 'true')");
+            }
+            if let Err(e) = app_clone.emit("request-start-recording", ()) {
+                log::error!("Tray: Failed to emit request-start-recording: {}", e);
             }
         }
     });

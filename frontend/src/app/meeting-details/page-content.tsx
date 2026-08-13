@@ -17,6 +17,9 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
+import { Download, FolderOpen, ArrowLeft } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { accessControlService } from '@/services/accessControlService';
 
 export default function PageContent({
   meeting,
@@ -47,6 +50,7 @@ export default function PageContent({
   loadedCount?: number;
   onLoadMore?: () => void;
 }) {
+  const router = useRouter();
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
     summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
@@ -134,6 +138,11 @@ export default function PageContent({
     meeting,
   });
 
+  const exportText = async () => {
+    try { const path = await accessControlService.exportMeetingText(meeting.id); toast.success('文字成果已保存', { description: path }); }
+    catch (error) { toast.error('无法下载文字成果', { description: String(error) }); }
+  };
+
   // Track page view
   useEffect(() => {
     Analytics.trackPageView('meeting_details');
@@ -168,9 +177,10 @@ export default function PageContent({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="flex flex-col h-screen bg-gray-50"
+      className="hyos-details-page"
     >
-      <div className="flex flex-1 overflow-hidden">
+      <div className="hyos-details-head"><div><button className="hyos-back" onClick={() => router.push('/files')}><ArrowLeft size={16} />返回文件管理</button><h1>{meetingData.meetingTitle}</h1><p>{new Date(meeting.created_at).toLocaleString('zh-CN', { hour12: false })} · 本地会议成果</p></div><div className="hyos-download-actions"><button className="hyos-secondary" onClick={exportText}><Download size={15} />导出文字</button><button className="hyos-primary" onClick={meetingOperations.handleOpenMeetingFolder}><FolderOpen size={15} />打开录音位置</button></div></div>
+      <div className="hyos-details-body">
         <TranscriptPanel
           transcripts={meetingData.transcripts}
           customPrompt={customPrompt}

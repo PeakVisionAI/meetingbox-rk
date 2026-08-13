@@ -1,7 +1,7 @@
 use log::{debug as log_debug, error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 use crate::{
@@ -369,6 +369,10 @@ pub async fn api_search_transcripts<R: Runtime>(
 
     match TranscriptsRepository::search_transcripts(pool, &query).await {
         Ok(results) => {
+            let results: Vec<_> = results
+                .into_iter()
+                .filter(|result| crate::access_control::is_meeting_unlocked(&result.id))
+                .collect();
             log_info!(
                 "Search completed successfully with {} results.",
                 results.len()
@@ -784,6 +788,7 @@ pub async fn api_get_meeting<R: Runtime>(
     state: tauri::State<'_, AppState>,
     auth_token: Option<String>,
 ) -> Result<MeetingDetails, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!(
         "api_get_meeting called(native) for meeting_id: {}, auth_token: {}",
         meeting_id,
@@ -815,6 +820,7 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
     meeting_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<MeetingMetadata, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
 
     let pool = state.db_manager.pool();
@@ -850,6 +856,7 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
     offset: i64,
     state: tauri::State<'_, AppState>,
 ) -> Result<PaginatedTranscriptsResponse, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!(
         "api_get_meeting_transcripts called for meeting_id: {}, limit: {}, offset: {}",
         meeting_id,
@@ -1010,6 +1017,7 @@ pub async fn open_meeting_folder<R: Runtime>(
     state: tauri::State<'_, AppState>,
     meeting_id: String,
 ) -> Result<(), String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!("open_meeting_folder called for meeting_id: {}", meeting_id);
 
     let pool = state.db_manager.pool();
@@ -1072,6 +1080,119 @@ pub async fn open_meeting_folder<R: Runtime>(
             Err("Meeting not found".to_string())
         }
     }
+}
+
+/// Prepare a meeting recording inside the app-data asset scope for in-app playback.
+/// The source path never leaves the trusted Rust side and access is gated by the
+/// same meeting unlock check used by the meeting details API.
+#[tauri::command]
+pub async fn get_meeting_audio_path<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<String, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
+    if !is_safe_meeting_id(&meeting_id) {
+        return Err("无效的会议编号".to_string());
+    }
+
+    let pool = state.db_manager.pool();
+    let meeting: Option<MeetingModel> = sqlx::query_as(
+        "SELECT id, title, created_at, updated_at, folder_path FROM meetings WHERE id = ?",
+    )
+    .bind(&meeting_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Database error: {}", e))?;
+
+    let folder_path = meeting
+        .and_then(|m| m.folder_path)
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| "本次会议没有录音目录".to_string())?;
+    let folder = std::path::Path::new(&folder_path);
+    if !folder.is_dir() {
+        return Err(format!("录音目录不存在: {}", folder_path));
+    }
+
+    let candidates = [
+        "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.flac",
+        "audio.ogg", "recording.mp4", "audio.mkv", "audio.webm", "audio.wma",
+    ];
+    let source = candidates
+        .iter()
+        .map(|name| folder.join(name))
+        .find(|path| path.is_file())
+        .or_else(|| {
+            std::fs::read_dir(folder).ok()?.flatten().map(|entry| entry.path()).find(|path| {
+                path.is_file()
+                    && path.extension().and_then(|ext| ext.to_str()).map(|ext| {
+                        matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "m4a" | "wav" | "mp3" | "flac" | "ogg" | "mkv" | "webm" | "wma")
+                    }).unwrap_or(false)
+            })
+        })
+        .ok_or_else(|| "本次会议没有找到录音文件".to_string())?;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法定位应用数据目录: {}", e))?;
+    let playback_dir = app_data_dir.join("playback");
+    std::fs::create_dir_all(&playback_dir)
+        .map_err(|e| format!("无法创建播放缓存目录: {}", e))?;
+    let extension = source.extension().and_then(|ext| ext.to_str()).unwrap_or("mp4");
+    let destination = playback_dir.join(format!("{}.{}", meeting_id, extension));
+    let needs_copy = match (std::fs::metadata(&source), std::fs::metadata(&destination)) {
+        (Ok(src), Ok(dst)) => src.len() != dst.len() || src.modified().ok() != dst.modified().ok(),
+        _ => true,
+    };
+    if needs_copy {
+        std::fs::copy(&source, &destination)
+            .map_err(|e| format!("无法准备录音播放文件: {}", e))?;
+    }
+
+    Ok(destination.to_string_lossy().to_string())
+}
+
+fn is_safe_meeting_id(meeting_id: &str) -> bool {
+    !meeting_id.is_empty()
+        && !meeting_id.contains('/')
+        && !meeting_id.contains('\\')
+        && !meeting_id.contains("..")
+}
+
+/// Remove the playback cache copy after the details page unmounts.
+#[tauri::command]
+pub async fn release_meeting_audio_path<R: Runtime>(
+    app: AppHandle<R>,
+    meeting_id: String,
+) -> Result<(), String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
+    if !is_safe_meeting_id(&meeting_id) {
+        return Err("无效的会议编号".to_string());
+    }
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法定位应用数据目录: {}", e))?;
+    let playback_dir = app_data_dir.join("playback");
+    if !playback_dir.is_dir() {
+        return Ok(());
+    }
+
+    let prefix = format!("{}.", meeting_id);
+    if let Ok(entries) = std::fs::read_dir(&playback_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if name.starts_with(&prefix) && path.is_file() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 // Simple test command to check backend connectivity

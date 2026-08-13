@@ -13,8 +13,10 @@
         "windows": [
             {
                 "title": "会议助手",
-                "width": 1100,
-                "height": 700,
+                "width": 1280,
+                "height": 800,
+                "minWidth": 1180,
+                "minHeight": 720,
                 "resizable": true,
                 "fullscreen": false,
                 "theme": "Light",
@@ -27,12 +29,13 @@
                 "default-src": "'self'",
                 "style-src": "'self' 'unsafe-inline'",
                 "img-src": "'self' asset: https://asset.localhost data:",
+                "media-src": "'self' asset: http://asset.localhost https://asset.localhost blob:",
                 "connect-src": "'self' http://localhost:11434 http://localhost:5167 http://localhost:8178 https://api.ollama.ai"
             },
             "assetProtocol": {
                 "enable": true,
                 "scope": [
-                    "$APPDATA/**"
+                    "$APPDATA/playback/**"
                 ]
             },
             "capabilities": [

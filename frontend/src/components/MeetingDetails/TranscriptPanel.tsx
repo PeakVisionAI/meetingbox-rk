@@ -5,7 +5,9 @@ import { TranscriptView } from '@/components/TranscriptView';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
 import { useMemo } from 'react';
+import { Pause, Play, Volume2 } from 'lucide-react';
 import { uiText } from '@/lib/uiText';
+import { useMeetingAudioPlayer } from '@/hooks/useMeetingAudioPlayer';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
@@ -50,6 +52,7 @@ export function TranscriptPanel({
   meetingFolderPath,
   onRefetchTranscripts,
 }: TranscriptPanelProps) {
+  const audioPlayer = useMeetingAudioPlayer(meetingId);
   // Convert transcripts to segments if pagination is not used but we want virtualization
   const convertedSegments = useMemo(() => {
     if (usePagination && segments) {
@@ -66,9 +69,9 @@ export function TranscriptPanel({
   }, [transcripts, usePagination, segments]);
 
   return (
-    <div className="hidden md:flex md:w-1/4 lg:w-1/3 min-w-0 border-r border-gray-200 bg-white flex-col relative shrink-0">
+    <div className="hyos-details-transcript min-w-0 bg-white flex-col relative shrink-0">
       {/* Title area */}
-      <div className="p-4 border-b border-gray-200">
+      <div className="border-b border-gray-200 p-4">
         <TranscriptButtonGroup
           transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
           onCopyTranscript={onCopyTranscript}
@@ -77,6 +80,42 @@ export function TranscriptPanel({
           meetingFolderPath={meetingFolderPath}
           onRefetchTranscripts={onRefetchTranscripts}
         />
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-600">
+            <Volume2 size={15} />
+            <span>会议录音</span>
+            {audioPlayer.isLoading && <span className="font-normal text-slate-400">正在加载…</span>}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+              onClick={() => audioPlayer.toggle()}
+              disabled={audioPlayer.isLoading}
+              title={audioPlayer.isPlaying ? '暂停录音' : '播放录音'}
+              aria-label={audioPlayer.isPlaying ? '暂停录音' : '播放录音'}
+            >
+              {audioPlayer.isPlaying ? <Pause size={15} /> : <Play size={15} />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={audioPlayer.duration || 0}
+              step={0.1}
+              value={Math.min(audioPlayer.currentTime, audioPlayer.duration || 0)}
+              onChange={(event) => audioPlayer.seek(Number(event.target.value))}
+              disabled={!audioPlayer.audioPath}
+              className="min-w-0 flex-1 accent-blue-600"
+              aria-label="录音进度"
+            />
+            <span className="w-20 text-right text-xs tabular-nums text-slate-500">
+              {formatTime(audioPlayer.currentTime)} / {formatTime(audioPlayer.duration)}
+            </span>
+          </div>
+          {audioPlayer.error && <p className="mt-2 text-xs text-amber-600">{audioPlayer.error}</p>}
+          {!audioPlayer.error && !audioPlayer.audioPath && <p className="mt-2 text-[11px] text-slate-400">点击播放后加载本次会议录音</p>}
+          {!audioPlayer.error && audioPlayer.audioPath && <p className="mt-2 text-[11px] text-slate-400">点击逐字稿右侧耳机按钮，从对应时间开始播放</p>}
+        </div>
       </div>
 
       {/* Transcript content - use virtualized view for better performance */}
@@ -95,6 +134,7 @@ export function TranscriptPanel({
           totalCount={totalCount}
           loadedCount={loadedCount}
           onLoadMore={onLoadMore}
+          onPlaySegment={audioPlayer.playSegment}
         />
       </div>
 
@@ -111,4 +151,10 @@ export function TranscriptPanel({
       )}
     </div>
   );
+}
+
+function formatTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '00:00';
+  const total = Math.floor(seconds);
+  return `${Math.floor(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}`;
 }

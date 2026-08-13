@@ -10,6 +10,7 @@ import { RecordingStatusBar } from "./RecordingStatusBar";
 import { motion } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
 import { uiText } from "@/lib/uiText";
+import { Headphones } from "lucide-react";
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -35,10 +36,17 @@ export interface VirtualizedTranscriptViewProps {
     totalCount?: number;
     loadedCount?: number;
     onLoadMore?: () => void;
+    onPlaySegment?: (timestamp: number, endTime?: number) => void;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
 const VIRTUALIZATION_THRESHOLD = 10;
+
+function splitSpeakerPrefix(text: string, explicitLabel?: string): { speakerLabel?: string; text: string } {
+    if (explicitLabel) return { speakerLabel: explicitLabel, text };
+    const match = text.match(/^(发言人[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
+    return match ? { speakerLabel: match[1], text: match[2] } : { text };
+}
 
 // Helper function to format seconds as recording-relative time [MM:SS]
 function formatRecordingTime(seconds: number | undefined): string {
@@ -68,19 +76,26 @@ function cleanStopWords(text: string): string {
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
     timestamp,
+    endTime,
     text,
     confidence,
+    speakerLabel,
     isStreaming,
     showConfidence,
+    onPlaySegment,
 }: {
     id: string;
     timestamp: number;
+    endTime?: number;
     text: string;
     confidence?: number;
+    speakerLabel?: string;
     isStreaming: boolean;
     showConfidence: boolean;
+    onPlaySegment?: (timestamp: number, endTime?: number) => void;
 }) {
-    const displayText = cleanStopWords(text) || (text.trim() === '' ? uiText.silence : text);
+    const parsed = splitSpeakerPrefix(text, speakerLabel);
+    const displayText = cleanStopWords(parsed.text) || (parsed.text.trim() === '' ? uiText.silence : parsed.text);
 
     return (
         <div id={`segment-${id}`} className="mb-3">
@@ -98,6 +113,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                     </TooltipContent>
                 </Tooltip>
                 <div className="flex-1">
+                    {parsed.speakerLabel && <div className="mb-1 text-xs font-semibold text-blue-700">{parsed.speakerLabel}</div>}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
@@ -106,6 +122,17 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                     )}
                 </div>
+                {onPlaySegment && (
+                    <button
+                        type="button"
+                        className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-blue-50 hover:text-blue-600"
+                        onClick={() => onPlaySegment(timestamp, endTime)}
+                        title="播放这一段录音"
+                        aria-label="播放这一段录音"
+                    >
+                        <Headphones size={15} />
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -125,6 +152,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
+    onPlaySegment,
 }) => {
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -289,10 +317,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                     <TranscriptSegment
                                         id={segment.id}
                                         timestamp={segment.timestamp}
+                                        endTime={segment.endTime}
                                         text={getDisplayText(segment)}
                                         confidence={segment.confidence}
+                                        speakerLabel={segment.speakerLabel}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        onPlaySegment={onPlaySegment}
                                     />
                                 </div>
                             );
@@ -345,10 +376,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                     <TranscriptSegment
                                         id={segment.id}
                                         timestamp={segment.timestamp}
+                                        endTime={segment.endTime}
                                         text={getDisplayText(segment)}
                                         confidence={segment.confidence}
+                                        speakerLabel={segment.speakerLabel}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        onPlaySegment={onPlaySegment}
                                     />
                                 </motion.div>
                             );

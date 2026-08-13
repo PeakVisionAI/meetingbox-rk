@@ -78,7 +78,7 @@ export function About() {
                     </Button>
                     {updateInfo?.available && (
                         <div className="mt-2 text-xs text-blue-600">
-                            {uiText.updateAvailable(updateInfo.version)}
+                            {uiText.updateAvailable(updateInfo.version || '最新版本')}
                         </div>
                     )}
                 </div>

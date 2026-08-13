@@ -233,6 +233,7 @@ pub async fn api_get_summary<R: Runtime>(
     meeting_id: String,
     _auth_token: Option<String>,
 ) -> Result<SummaryResponse, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!(
         "api_get_summary (native) called for meeting_id: {}",
         meeting_id
@@ -339,7 +340,13 @@ pub async fn api_process_transcript<R: Runtime>(
 ) -> Result<ProcessTranscriptResponse, String> {
     use uuid::Uuid;
 
-    let m_id = meeting_id.unwrap_or_else(|| format!("meeting-{}", Uuid::new_v4()));
+    let m_id = match meeting_id {
+        Some(meeting_id) => {
+            crate::access_control::require_meeting_unlocked(&meeting_id)?;
+            meeting_id
+        }
+        None => format!("meeting-{}", Uuid::new_v4()),
+    };
     log_info!(
         "api_process_transcript (native) called for meeting_id: {}, model: {}",
         &m_id,
@@ -416,6 +423,7 @@ pub async fn api_cancel_summary<R: Runtime>(
     state: tauri::State<'_, AppState>,
     meeting_id: String,
 ) -> Result<serde_json::Value, String> {
+    crate::access_control::require_meeting_unlocked(&meeting_id)?;
     log_info!("api_cancel_summary called for meeting_id: {}", meeting_id);
 
     // Trigger cancellation via the service
