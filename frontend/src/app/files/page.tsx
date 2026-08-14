@@ -54,13 +54,15 @@ export default function FilesPage() {
         <div className="hyos-panel hyos-file-list">
           <div className="hyos-search"><Search size={16} /><input placeholder="搜索会议或音频文件" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
           <div className="hyos-panel-head"><h2>全部文件</h2><span>{items.length} 项</span></div>
-          {items.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : items.map((meeting) => (
-            <button className="hyos-file-row" key={meeting.id} onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}>
-              <span className="hyos-file-icon"><FileText size={16} /></span>
-              <span><b>{meeting.title}</b><small>{new Date(meeting.created_at || Date.now()).toLocaleString('zh-CN', { hour12: false })}</small></span>
-              <em><LockKeyhole size={13} />{meeting.usesIndependentPassword ? '独立会议密码' : '管理员密码'}</em>
-            </button>
-          ))}
+          <div className="hyos-file-rows custom-scrollbar">
+            {items.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : items.map((meeting) => (
+              <button className="hyos-file-row" key={meeting.id} onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}>
+                <span className="hyos-file-icon"><FileText size={16} /></span>
+                <span><b>{meeting.title}</b><small>{new Date(meeting.created_at || Date.now()).toLocaleString('zh-CN', { hour12: false })}</small></span>
+                <em><LockKeyhole size={13} />{meeting.usesIndependentPassword ? '独立会议密码' : '管理员密码'}</em>
+              </button>
+            ))}
+          </div>
         </div>
         <div className="hyos-panel hyos-file-placeholder"><FileAudio size={30} /><h2>选择会议文件</h2><p>从左侧选择会议，验证会议密码后查看逐字稿、AI 总结和录音成果。</p><button className="hyos-secondary" onClick={() => toast.info('请先选择左侧会议文件')}>查看文件详情</button></div>
       </section>

@@ -127,8 +127,8 @@ export default function Home() {
       {!showLive && (
         <>
           <section className="hyos-launcher" aria-label="会议工作台">
-            <button className="hyos-launch primary" onClick={() => setQuickMeetingOpen(true)}><span><Play size={21} /></span><strong>快速会议</strong><small>开始会议记录</small></button>
-            <button className="hyos-launch" onClick={() => router.push('/files')}><span><FileText size={21} /></span><strong>会议管理</strong><small>查看和管理会议资料</small></button>
+            <button className="hyos-launch primary" onClick={() => setQuickMeetingOpen(true)}><span><Play size={21} /></span><strong>快速会议</strong></button>
+            <button className="hyos-launch" onClick={() => router.push('/files')}><span><FileText size={21} /></span><strong>会议文件管理</strong><small>查看和管理会议资料</small></button>
           </section>
           <section className="hyos-panel hyos-recent">
             <div className="hyos-panel-head"><h2>最近会议</h2><button onClick={() => router.push('/files')}>查看全部</button></div>
