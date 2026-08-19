@@ -3,6 +3,7 @@
 import React, { useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useRecordingStop } from '@/hooks/useRecordingStop';
+import type { StopRecordingResult } from '@/services/recordingService';
 
 /**
  * RecordingPostProcessingProvider
@@ -33,12 +34,11 @@ export function RecordingPostProcessingProvider({ children }: { children: React.
     const setupListener = async () => {
       try {
         // Listen for recording-stop-complete event from Rust
-        unlistenFn = await listen<boolean>('recording-stop-complete', (event) => {
+        unlistenFn = await listen<StopRecordingResult>('recording-stop-complete', (event) => {
           console.log('[RecordingPostProcessing] Received recording-stop-complete event:', event.payload);
 
           // Call the post-processing handler
-          // event.payload is the callApi boolean (true for normal stops)
-          handleRecordingStop(event.payload);
+          handleRecordingStop(true, event.payload.speaker_calibration);
         });
 
         console.log('[RecordingPostProcessing] Event listener set up successfully');

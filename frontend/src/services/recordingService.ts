@@ -22,6 +22,24 @@ export interface RecordingStoppedPayload {
   meeting_name?: string;
 }
 
+export interface FinalizedSpeakerSegment {
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  speaker_id?: number | null;
+  speaker?: string | null;
+}
+
+export interface SpeakerCalibrationResult {
+  finalized: boolean;
+  segments: FinalizedSpeakerSegment[];
+  error?: string | null;
+}
+
+export interface StopRecordingResult {
+  speaker_calibration: SpeakerCalibrationResult;
+}
+
 /**
  * Recording Service
  * Singleton service for managing recording lifecycle operations
@@ -83,8 +101,8 @@ export class RecordingService {
    * @param savePath - Path to save audio file
    * @returns Promise<void>
    */
-  async stopRecording(savePath: string): Promise<void> {
-    return invoke('stop_recording', {
+  async stopRecording(savePath: string): Promise<StopRecordingResult> {
+    return invoke<StopRecordingResult>('stop_recording', {
       args: { save_path: savePath }
     });
   }

@@ -21,10 +21,21 @@ pub struct AdminStatus {
     initialized: bool,
 }
 
-fn hash_password(password: &str) -> Result<String, String> {
+fn hash_admin_password(password: &str) -> Result<String, String> {
     if password.trim().len() < 8 {
-        return Err("密码至少需要 8 个字符".to_string());
+        return Err("管理员密码至少需要 8 个字符".to_string());
     }
+    hash_password(password)
+}
+
+fn hash_meeting_password(password: &str) -> Result<String, String> {
+    if password.len() != 6 || !password.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("会议密码必须是 6 位数字".to_string());
+    }
+    hash_password(password)
+}
+
+fn hash_password(password: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -35,14 +46,14 @@ fn hash_password(password: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        hash_password, require_meeting_unlocked, summary_markdown, verify_password,
-        UNLOCKED_MEETINGS,
+        hash_admin_password, hash_meeting_password, require_meeting_unlocked, summary_markdown,
+        verify_password, UNLOCKED_MEETINGS,
     };
 
     #[test]
     fn password_hash_is_salted_and_verifiable() {
-        let first = hash_password("secure-pass").expect("password should hash");
-        let second = hash_password("secure-pass").expect("password should hash");
+        let first = hash_admin_password("secure-pass").expect("password should hash");
+        let second = hash_admin_password("secure-pass").expect("password should hash");
 
         assert_ne!(first, second);
         assert!(verify_password("secure-pass", &first));
@@ -52,8 +63,17 @@ mod tests {
 
     #[test]
     fn password_rejects_short_or_whitespace_only_values() {
-        assert!(hash_password("short").is_err());
-        assert!(hash_password("        ").is_err());
+        assert!(hash_admin_password("short").is_err());
+        assert!(hash_admin_password("        ").is_err());
+    }
+
+    #[test]
+    fn meeting_password_requires_exactly_six_ascii_digits() {
+        assert!(hash_meeting_password("123456").is_ok());
+        assert!(hash_meeting_password("12345").is_err());
+        assert!(hash_meeting_password("1234567").is_err());
+        assert!(hash_meeting_password("12345a").is_err());
+        assert!(hash_meeting_password("１２３４５６").is_err());
     }
 
     #[test]
@@ -145,7 +165,7 @@ pub async fn initialize_admin_password(
     if initialized {
         return Err("管理员已经完成初始化".to_string());
     }
-    let new_hash = hash_password(&new_password)?;
+    let new_hash = hash_admin_password(&new_password)?;
     sqlx::query("UPDATE local_admin_credentials SET password_hash = ?, initialized = 1, updated_at = ? WHERE id = 1")
         .bind(new_hash)
         .bind(Utc::now().to_rfc3339())
@@ -186,7 +206,7 @@ pub async fn change_admin_password(
     if !verify_password(&current_password, &hash) {
         return Err("当前管理员密码不正确".to_string());
     }
-    let new_hash = hash_password(&new_password)?;
+    let new_hash = hash_admin_password(&new_password)?;
     sqlx::query("UPDATE local_admin_credentials SET password_hash = ?, initialized = 1, updated_at = ? WHERE id = 1")
         .bind(new_hash)
         .bind(Utc::now().to_rfc3339())
@@ -204,6 +224,12 @@ fn admin_is_authenticated() -> Result<bool, String> {
         .lock()
         .map(|authenticated| *authenticated)
         .map_err(|_| "安全状态不可用".to_string())
+}
+
+pub(crate) fn require_admin_authenticated() -> Result<(), String> {
+    admin_is_authenticated()?
+        .then_some(())
+        .ok_or_else(|| "需要管理员登录后才能执行此操作".to_string())
 }
 
 pub fn require_meeting_unlocked(meeting_id: &str) -> Result<(), String> {
@@ -247,18 +273,22 @@ pub async fn set_meeting_password(
         return Err("需要管理员登录后才能设置会议密码".to_string());
     }
     let password = password.filter(|value| !value.trim().is_empty());
-    let password_hash = password.as_deref().map(hash_password).transpose()?;
+    let password_hash = password.as_deref().map(hash_meeting_password).transpose()?;
     let uses_admin = password_hash.is_none();
     sqlx::query(
         "INSERT INTO meeting_access_credentials (meeting_id, password_hash, uses_admin_password, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(meeting_id) DO UPDATE SET password_hash = excluded.password_hash, uses_admin_password = excluded.uses_admin_password, updated_at = excluded.updated_at",
     )
-    .bind(meeting_id)
+    .bind(&meeting_id)
     .bind(password_hash)
     .bind(uses_admin)
     .bind(Utc::now().to_rfc3339())
     .execute(state.db_manager.pool())
     .await
     .map_err(|error| error.to_string())?;
+    UNLOCKED_MEETINGS
+        .lock()
+        .map_err(|_| "安全状态不可用".to_string())?
+        .insert(meeting_id);
     Ok(())
 }
 

@@ -12,6 +12,7 @@ import {
   readMeetingSummaryLanguage,
   readCachedDetectedSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+import { minuteSummaryService } from '@/services/minuteSummaryService';
 
 async function resolveSummaryLanguage(
   meetingId: string,
@@ -452,6 +453,23 @@ export function useSummaryGeneration({
     };
   }, []);
 
+  const withMinuteSummaryContext = useCallback(async (customPrompt: string) => {
+    try {
+      const minuteSummaries = await minuteSummaryService.list(meeting.id);
+      const completed = minuteSummaries.filter((item) => item.summary.trim().length > 0);
+      if (!completed.length) return customPrompt;
+      const context = completed
+        .map((item) => `[${Math.floor(item.start_seconds / 60).toString().padStart(2, '0')}:00-${Math.floor(item.end_seconds / 60).toString().padStart(2, '0')}:00] ${item.summary}`)
+        .join('\n');
+      return [customPrompt.trim(), `以下是会中按分钟生成的连续摘要，请作为最终纪要的结构化依据，并以完整逐字稿为准核对：\n${context}`]
+        .filter(Boolean)
+        .join('\n\n');
+    } catch (error) {
+      console.warn('Failed to load minute summaries for final summary:', error);
+      return customPrompt;
+    }
+  }, [meeting.id]);
+
   // Public API: Generate summary from transcripts
   const handleGenerateSummary = useCallback(async (customPrompt: string = '') => {
     // Check if model config is still loading
@@ -612,9 +630,9 @@ export function useSummaryGeneration({
 
     await processSummary({
       ...summaryPayload,
-      customPrompt,
+      customPrompt: await withMinuteSummaryContext(customPrompt),
     });
-  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate]);
+  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate, withMinuteSummaryContext]);
 
   // Public API: Regenerate summary from the current saved transcript
   const handleRegenerateSummary = useCallback(async () => {
@@ -628,9 +646,10 @@ export function useSummaryGeneration({
 
     await processSummary({
       ...buildSummaryTranscriptPayload(allTranscripts),
+      customPrompt: await withMinuteSummaryContext(''),
       isRegeneration: true
     });
-  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary]);
+  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, withMinuteSummaryContext]);
 
   // Public API: Stop ongoing summary generation
   const handleStopGeneration = useCallback(async () => {

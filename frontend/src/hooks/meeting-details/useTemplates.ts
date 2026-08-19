@@ -4,13 +4,21 @@ import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 import { uiText } from '@/lib/uiText';
 
-export function useTemplates() {
+export interface SummaryTemplateInfo {
+  id: string;
+  name: string;
+  description: string;
+  is_custom: boolean;
+}
+
+export function useTemplates(initialTemplate = 'standard_meeting') {
   const [availableTemplates, setAvailableTemplates] = useState<Array<{
     id: string;
     name: string;
     description: string;
+    is_custom: boolean;
   }>>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('standard_meeting');
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(initialTemplate);
 
   // Fetch available templates on mount
   useEffect(() => {
@@ -20,17 +28,17 @@ export function useTemplates() {
           id: string;
           name: string;
           description: string;
+          is_custom: boolean;
         }>;
-        const productTemplates = templates.filter((template) => template.id === 'standard_meeting');
-        console.log('Available templates:', productTemplates);
-        setAvailableTemplates(productTemplates);
-        setSelectedTemplate('standard_meeting');
+        console.log('Available templates:', templates);
+        setAvailableTemplates(templates);
+        setSelectedTemplate(templates.some((template) => template.id === initialTemplate) ? initialTemplate : 'standard_meeting');
       } catch (error) {
         console.error('Failed to fetch templates:', error);
       }
     };
     fetchTemplates();
-  }, []);
+  }, [initialTemplate]);
 
   // Handle template selection
   const handleTemplateSelection = useCallback((templateId: string, templateName: string) => {

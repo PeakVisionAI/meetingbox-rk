@@ -206,7 +206,6 @@ fn mix_window_peak(samples: &[f32]) -> f32 {
 const ENERGY_SPEECH_RMS: f32 = 0.025;
 const ENERGY_MIN_SAMPLES_16K: usize = 32000; // 2s before a live emit
 const ENERGY_FLUSH_MIN_SAMPLES_16K: usize = 32000; // 2s on stop
-const ENERGY_MAX_SAMPLES_16K: usize = 16000 * 8;
 
 fn downsample_for_energy_fallback(samples: &[f32], sample_rate: u32) -> Vec<f32> {
     if sample_rate == 16000 {
@@ -761,7 +760,7 @@ impl AudioPipeline {
 
         let vad_processor = match ContinuousVadProcessor::new(sample_rate, redemption_time) {
             Ok(processor) => {
-                info!("VAD-driven pipeline: VAD segments will be sent directly to Whisper (no time-based accumulation)");
+                info!("Fixed-window pipeline: speech is accumulated and sent to Whisper every 2 seconds");
                 processor
             }
             Err(e) => {
@@ -774,7 +773,8 @@ impl AudioPipeline {
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate);
         let mixer = ProfessionalAudioMixer::new(sample_rate);
 
-        // Note: target_chunk_duration_ms is ignored - VAD controls segmentation now
+        // The legacy target is still passed by the manager, but live segmentation is
+        // intentionally fixed at 2 seconds so continuous speech is transcribed promptly.
         let _ = target_chunk_duration_ms;
 
         Self {
@@ -850,18 +850,25 @@ impl AudioPipeline {
             self.energy_fallback_16k.clear();
             return;
         }
-        while data.len() > ENERGY_MAX_SAMPLES_16K {
-            let chunk: Vec<f32> = data.drain(..ENERGY_MAX_SAMPLES_16K).collect();
-            self.send_transcription_16k(chunk, "energy-fallback");
+        while data.len() >= ENERGY_MIN_SAMPLES_16K {
+            let chunk: Vec<f32> = data.drain(..ENERGY_MIN_SAMPLES_16K).collect();
+            self.send_transcription_16k(chunk, "fixed-speech-window");
         }
         if data.len() >= 800 {
-            self.send_transcription_16k(data, "energy-fallback");
+            self.energy_fallback_16k = data;
         }
     }
 
-    /// Run the VAD-driven audio processing pipeline
+    fn emit_remaining_speech(&mut self, reason: &str) {
+        let remaining = std::mem::take(&mut self.energy_fallback_16k);
+        if remaining.len() >= 800 {
+            self.send_transcription_16k(remaining, reason);
+        }
+    }
+
+    /// Run the fixed-duration speech-window processing pipeline.
     pub async fn run(mut self) -> Result<()> {
-        info!("VAD-driven audio pipeline started - segments sent in real-time based on speech detection");
+        info!("Fixed-window audio pipeline started - speech windows are sent every 2 seconds");
 
         // CRITICAL FIX: Continue processing until channel is closed, not based on recording state
         // This ensures ALL chunks are processed during shutdown, fixing premature meeting completion
@@ -948,83 +955,43 @@ impl AudioPipeline {
                                 }
                             }
 
-                            // STEP 3: Send mixed audio for transcription (VAD + Whisper)
-                            let mut vad_emitted = 0usize;
+                            // STEP 3: Keep VAD as a speech gate, but send fixed-duration
+                            // windows while speech is ongoing. VAD's completed segments
+                            // are intentionally not forwarded here because they wait for
+                            // a pause before becoming available.
                             match self.vad_processor.process_audio(&vad_input) {
-                                Ok(speech_segments) => {
-                                    for segment in speech_segments {
-                                        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-
-                                        if segment.samples.len() >= 800 {  // Minimum 50ms at 16kHz - matches Parakeet capability
-                                            let timestamp = self.next_transcription_timestamp(
-                                                segment.start_timestamp_ms / 1000.0,
-                                                duration_ms / 1000.0,
-                                            );
-                                            info!(
-                                                "📤 Sending VAD segment: {:.1}ms, {} samples, ts={:.2}s",
-                                                duration_ms,
-                                                segment.samples.len(),
-                                                timestamp
-                                            );
-
-                                            let transcription_chunk = AudioChunk {
-                                                data: segment.samples,
-                                                sample_rate: 16000,
-                                                timestamp,
-                                                chunk_id: self.chunk_id_counter,
-                                                device_type: DeviceType::Microphone,  // Mixed audio
-                                            };
-
-                                            if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                                                warn!("Failed to send VAD segment: {}", e);
-                                            } else {
-                                                self.chunk_id_counter += 1;
-                                                vad_emitted += 1;
-                                            }
-                                        } else {
-                                            debug!("⏭️ Dropping short VAD segment: {:.1}ms ({} samples < 800)",
-                                                   duration_ms, segment.samples.len());
-                                        }
-                                    }
-                                }
+                                Ok(_completed_segments) => {}
                                 Err(e) => {
                                     warn!("⚠️ VAD error: {}", e);
                                 }
                             }
 
-                            if vad_emitted > 0 || self.vad_processor.is_holding_speech() {
-                                // VAD already owns this utterance. Do not also emit
-                                // energy-fallback slices of the same speech.
-                                self.energy_fallback_16k.clear();
-                                self.energy_quiet_windows = 0;
-                            } else if mix_rms >= ENERGY_SPEECH_RMS {
+                            let speech_detected =
+                                mix_rms >= ENERGY_SPEECH_RMS || self.vad_processor.is_holding_speech();
+                            if speech_detected {
                                 self.energy_quiet_windows = 0;
                                 let resampled = downsample_for_energy_fallback(
                                     &mixed_with_gain,
                                     self.sample_rate,
                                 );
                                 self.energy_fallback_16k.extend_from_slice(&resampled);
-                                if self.energy_fallback_16k.len() >= ENERGY_MAX_SAMPLES_16K {
+                                if self.energy_fallback_16k.len() >= ENERGY_MIN_SAMPLES_16K {
                                     self.emit_energy_fallback();
                                 }
                             } else {
                                 self.energy_quiet_windows = self.energy_quiet_windows.saturating_add(1);
-                                if self.energy_fallback_16k.len() >= ENERGY_MIN_SAMPLES_16K
+                                if self.energy_fallback_16k.len() >= 800
                                     && self.energy_quiet_windows >= 2
                                 {
                                     info!(
-                                        "🎚️ Energy fallback emitting {} samples after quiet (rms={:.4})",
+                                        "🎚️ Emitting {} tail samples after speech ended (rms={:.4})",
                                         self.energy_fallback_16k.len(),
                                         mix_rms
                                     );
-                                    self.emit_energy_fallback();
+                                    self.emit_remaining_speech("speech-tail");
                                     self.energy_quiet_windows = 0;
                                 } else if self.energy_quiet_windows >= 4 {
-                                    if self.energy_fallback_16k.len() >= ENERGY_FLUSH_MIN_SAMPLES_16K {
-                                        self.emit_energy_fallback();
-                                    } else {
-                                        self.energy_fallback_16k.clear();
-                                    }
+                                    self.energy_fallback_16k.clear();
                                     self.energy_quiet_windows = 0;
                                 }
                             }
@@ -1048,60 +1015,25 @@ impl AudioPipeline {
                     break;
                 }
                 Err(_) => {
-                    // Timeout - just continue, VAD handles all segmentation
+                    // Timeout - just continue; the next mixed window advances the speech buffer.
                     continue;
                 }
             }
         }
 
-        // Flush any remaining VAD segments
+        // Flush VAD state for cleanup only. Completed VAD segments are not sent
+        // because live transcription is driven by fixed-duration speech windows.
         self.flush_remaining_audio()?;
 
-        info!("VAD-driven audio pipeline ended");
+        info!("Fixed-window audio pipeline ended");
         Ok(())
     }
 
     fn flush_remaining_audio(&mut self) -> Result<()> {
         info!("Flushing remaining audio from pipeline (processed {} chunks)", self.processed_chunks);
 
-        // Flush any remaining audio from VAD processor and send segments to transcription
         match self.vad_processor.flush() {
-            Ok(final_segments) => {
-                for segment in final_segments {
-                    let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-
-                    // Send segments >= 50ms (800 samples at 16kHz) - matches main pipeline filter
-                    if segment.samples.len() >= 800 {
-                        let timestamp = self.next_transcription_timestamp(
-                            segment.start_timestamp_ms / 1000.0,
-                            duration_ms / 1000.0,
-                        );
-                        info!(
-                            "📤 Sending final VAD segment: {:.1}ms, {} samples, ts={:.2}s",
-                            duration_ms,
-                            segment.samples.len(),
-                            timestamp
-                        );
-
-                        let transcription_chunk = AudioChunk {
-                            data: segment.samples,
-                            sample_rate: 16000,
-                            timestamp,
-                            chunk_id: self.chunk_id_counter,
-                            device_type: DeviceType::Microphone,
-                        };
-
-                        if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                            warn!("Failed to send final VAD segment: {}", e);
-                        } else {
-                            self.chunk_id_counter += 1;
-                        }
-                    } else {
-                        info!("⏭️ Skipping short final segment: {:.1}ms ({} samples < 800)",
-                              duration_ms, segment.samples.len());
-                    }
-                }
-            }
+            Ok(_final_segments) => {}
             Err(e) => {
                 warn!("Failed to flush VAD processor: {}", e);
             }
@@ -1109,12 +1041,13 @@ impl AudioPipeline {
 
         if self.energy_fallback_16k.len() >= ENERGY_FLUSH_MIN_SAMPLES_16K {
             info!(
-                "🎚️ Energy fallback flush emitting {} samples",
+                "🎚️ Fixed speech-window flush emitting {} samples",
                 self.energy_fallback_16k.len()
             );
             self.emit_energy_fallback();
-        } else {
-            self.energy_fallback_16k.clear();
+        }
+        if !self.energy_fallback_16k.is_empty() {
+            self.emit_remaining_speech("final-speech-window");
         }
 
         Ok(())

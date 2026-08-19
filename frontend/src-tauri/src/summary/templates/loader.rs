@@ -1,9 +1,9 @@
 use super::defaults;
 use super::types::Template;
-use std::path::PathBuf;
-use tracing::{debug, info, warn};
 use once_cell::sync::Lazy;
+use std::path::PathBuf;
 use std::sync::RwLock;
+use tracing::{debug, info, warn};
 
 // Global storage for the bundled templates directory path
 static BUNDLED_TEMPLATES_DIR: Lazy<RwLock<Option<PathBuf>>> = Lazy::new(|| RwLock::new(None));
@@ -29,6 +29,56 @@ fn get_custom_templates_dir() -> Option<PathBuf> {
     Some(path)
 }
 
+fn validate_template_id(template_id: &str) -> Result<(), String> {
+    if template_id.is_empty()
+        || template_id.len() > 80
+        || !template_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err("模板 ID 只能包含字母、数字、下划线和连字符".to_string());
+    }
+    Ok(())
+}
+
+pub fn is_custom_template(template_id: &str) -> bool {
+    get_custom_templates_dir()
+        .map(|dir| dir.join(format!("{}.json", template_id)).is_file())
+        .unwrap_or(false)
+}
+
+pub fn save_custom_template(template_id: &str, template: &Template) -> Result<(), String> {
+    validate_template_id(template_id)?;
+    template.validate()?;
+    if defaults::get_builtin_template(template_id).is_some()
+        || load_bundled_template(template_id).is_some()
+    {
+        return Err("内置模板不能覆盖，请另存为自定义模板".to_string());
+    }
+    let custom_dir =
+        get_custom_templates_dir().ok_or_else(|| "无法确定模板保存目录".to_string())?;
+    std::fs::create_dir_all(&custom_dir).map_err(|error| format!("无法创建模板目录: {}", error))?;
+    let path = custom_dir.join(format!("{}.json", template_id));
+    let temporary_path = custom_dir.join(format!("{}.json.tmp", template_id));
+    let content = serde_json::to_string_pretty(template)
+        .map_err(|error| format!("无法序列化模板: {}", error))?;
+    std::fs::write(&temporary_path, content).map_err(|error| format!("无法保存模板: {}", error))?;
+    std::fs::rename(&temporary_path, &path)
+        .map_err(|error| format!("无法完成模板保存: {}", error))?;
+    Ok(())
+}
+
+pub fn delete_custom_template(template_id: &str) -> Result<(), String> {
+    validate_template_id(template_id)?;
+    let custom_dir =
+        get_custom_templates_dir().ok_or_else(|| "无法确定模板保存目录".to_string())?;
+    let path = custom_dir.join(format!("{}.json", template_id));
+    if !path.is_file() {
+        return Err("只能删除已有的自定义模板".to_string());
+    }
+    std::fs::remove_file(path).map_err(|error| format!("无法删除模板: {}", error))
+}
+
 /// Load a template from the bundled resources directory
 ///
 /// # Arguments
@@ -44,7 +94,10 @@ fn load_bundled_template(template_id: &str) -> Option<String> {
 
     match std::fs::read_to_string(&template_path) {
         Ok(content) => {
-            info!("Loaded bundled template '{}' from {:?}", template_id, template_path);
+            info!(
+                "Loaded bundled template '{}' from {:?}",
+                template_id, template_path
+            );
             Some(content)
         }
         Err(e) => {
@@ -69,7 +122,10 @@ fn load_custom_template(template_id: &str) -> Option<String> {
 
     match std::fs::read_to_string(&template_path) {
         Ok(content) => {
-            info!("Loaded custom template '{}' from {:?}", template_id, template_path);
+            info!(
+                "Loaded custom template '{}' from {:?}",
+                template_id, template_path
+            );
             Some(content)
         }
         Err(e) => {
@@ -193,10 +249,6 @@ pub fn list_template_ids() -> Vec<String> {
         }
     }
 
-    ids.retain(|id| id == "standard_meeting");
-    if ids.is_empty() {
-        ids.push("standard_meeting".to_string());
-    }
     ids.sort();
     ids
 }
@@ -244,7 +296,8 @@ mod tests {
     #[test]
     fn test_list_template_ids() {
         let ids = list_template_ids();
-        assert_eq!(ids, vec!["standard_meeting".to_string()]);
+        assert!(ids.contains(&"daily_standup".to_string()));
+        assert!(ids.contains(&"standard_meeting".to_string()));
     }
 
     #[test]

@@ -143,13 +143,16 @@ async fn start_recording<R: Runtime>(
 }
 
 #[tauri::command]
-async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> Result<(), String> {
+async fn stop_recording<R: Runtime>(
+    app: AppHandle<R>,
+    args: RecordingArgs,
+) -> Result<audio::recording_commands::StopRecordingResult, String> {
     log_info!("Attempting to stop recording...");
 
     // Check the actual audio recording system state instead of the flag
     if !audio::recording_commands::is_recording().await {
         log_info!("Recording is already stopped");
-        return Ok(());
+        return Ok(audio::recording_commands::StopRecordingResult::default());
     }
 
     // Call the actual audio recording system to stop
@@ -161,7 +164,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
     )
     .await
     {
-        Ok(_) => {
+        Ok(result) => {
             RECORDING_FLAG.store(false, Ordering::SeqCst);
             tray::update_tray_menu(&app);
 
@@ -194,7 +197,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
                 log_info!("Successfully showed recording stopped notification");
             }
 
-            Ok(())
+            Ok(result)
         }
         Err(e) => {
             log_error!("Failed to stop audio recording: {}", e);
@@ -680,10 +683,15 @@ pub fn run() {
             summary::commands::api_save_meeting_detected_summary_language,
             summary::commands::api_detect_transcript_summary_language,
             summary::commands::api_cancel_summary,
+            summary::live_summary_commands::api_generate_minute_summary,
+            summary::live_summary_commands::api_save_meeting_minute_summaries,
+            summary::live_summary_commands::api_get_meeting_minute_summaries,
             // Template commands
             summary::template_commands::api_list_templates,
             summary::template_commands::api_get_template_details,
             summary::template_commands::api_validate_template,
+            summary::template_commands::api_save_custom_template,
+            summary::template_commands::api_delete_custom_template,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
             summary::summary_engine::commands::builtin_ai_get_model_info,
