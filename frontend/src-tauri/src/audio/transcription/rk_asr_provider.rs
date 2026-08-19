@@ -4,7 +4,7 @@ use super::provider::{TranscriptResult, TranscriptionError, TranscriptionProvide
 use async_trait::async_trait;
 use log::{info, warn};
 use reqwest::multipart::{Form, Part};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +13,8 @@ pub const RK_ASR_ENDPOINT: &str = "http://127.0.0.1:8020";
 pub const RK_ASR_MODEL: &str = "sensevoice-rknn";
 const SAMPLE_RATE: u32 = 16_000;
 const MINIMUM_SAMPLES: usize = 16_000; // 1s at 16kHz; shorter clips crash SenseVoice fsmnvad
+const FINALIZE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const FINALIZE_TIMEOUT: Duration = Duration::from_secs(300);
 
 static CURRENT_MEETING_ID: AtomicI64 = AtomicI64::new(0);
 static CURRENT_CHUNK_START_MS: AtomicI64 = AtomicI64::new(0);
@@ -42,6 +44,40 @@ struct AsrResponse {
     diarization: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct FinalizedAsrSegment {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub text: String,
+    #[serde(default)]
+    pub speaker_id: Option<i64>,
+    #[serde(default)]
+    pub speaker: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SpeakerCalibrationResult {
+    pub finalized: bool,
+    pub segments: Vec<FinalizedAsrSegment>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FinalizeResponse {
+    #[serde(default)]
+    finalized: bool,
+    #[serde(default)]
+    pending: bool,
+    #[serde(default)]
+    job_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    segments: Vec<FinalizedAsrSegment>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
 pub struct RkAsrProvider {
     endpoint: String,
     client: reqwest::Client,
@@ -65,11 +101,13 @@ impl RkAsrProvider {
         Self::new(RK_ASR_ENDPOINT)
     }
 
-    pub async fn finalize_current_meeting(&self) -> Result<(), TranscriptionError> {
+    pub async fn finalize_current_meeting(
+        &self,
+    ) -> Result<SpeakerCalibrationResult, TranscriptionError> {
         let meeting_id = CURRENT_MEETING_ID.swap(0, Ordering::SeqCst);
         CURRENT_CHUNK_START_MS.store(0, Ordering::SeqCst);
         if meeting_id <= 0 {
-            return Ok(());
+            return Ok(SpeakerCalibrationResult::default());
         }
 
         let response = self
@@ -83,18 +121,52 @@ impl RkAsrProvider {
             .await
             .map_err(|error| TranscriptionError::EngineFailed(error.to_string()))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let detail = response.text().await.unwrap_or_default();
-            return Err(TranscriptionError::EngineFailed(format!(
-                "RK ASR finalize returned HTTP {}: {}",
-                status,
-                detail.chars().take(500).collect::<String>()
-            )));
+        let mut payload = parse_finalize_response(response, "finalize").await?;
+        if payload.finalized || !payload.pending {
+            return Ok(calibration_result(payload));
+        }
+        let job_id = payload.job_id.take().ok_or_else(|| {
+            TranscriptionError::EngineFailed("RK ASR finalize did not return job_id".to_string())
+        })?;
+
+        info!(
+            "RK ASR finalize requested for meeting_id={} job_id={}",
+            meeting_id, job_id
+        );
+        let started = std::time::Instant::now();
+        while started.elapsed() < FINALIZE_TIMEOUT {
+            tokio::time::sleep(FINALIZE_POLL_INTERVAL).await;
+            let response = self
+                .client
+                .get(format!(
+                    "{}/v1/asr/finalize-meeting/{}",
+                    self.endpoint, job_id
+                ))
+                .send()
+                .await
+                .map_err(|error| TranscriptionError::EngineFailed(error.to_string()))?;
+            payload = parse_finalize_response(response, "finalize status").await?;
+            if payload.status.as_deref() == Some("failed") {
+                return Err(TranscriptionError::EngineFailed(
+                    payload
+                        .error
+                        .unwrap_or_else(|| "RK ASR speaker calibration failed".to_string()),
+                ));
+            }
+            if payload.finalized || payload.status.as_deref() == Some("completed") {
+                info!(
+                    "RK ASR speaker calibration completed for meeting_id={} segments={}",
+                    meeting_id,
+                    payload.segments.len()
+                );
+                return Ok(calibration_result(payload));
+            }
         }
 
-        info!("RK ASR finalize requested for meeting_id={}", meeting_id);
-        Ok(())
+        Err(TranscriptionError::EngineFailed(format!(
+            "RK ASR speaker calibration timed out after {} seconds",
+            FINALIZE_TIMEOUT.as_secs()
+        )))
     }
 
     pub async fn check_ready(&self) -> Result<bool, TranscriptionError> {
@@ -267,14 +339,53 @@ pub fn is_rk_asr_provider(provider: Option<&str>) -> bool {
     !matches!(provider, Some("parakeet" | "whisper" | "localWhisper"))
 }
 
-pub async fn finalize_current_meeting() {
+pub async fn finalize_current_meeting() -> SpeakerCalibrationResult {
     match RkAsrProvider::local() {
-        Ok(provider) => {
-            if let Err(error) = provider.finalize_current_meeting().await {
+        Ok(provider) => match provider.finalize_current_meeting().await {
+            Ok(result) => result,
+            Err(error) => {
                 warn!("RK ASR finalize failed: {}", error);
+                SpeakerCalibrationResult {
+                    error: Some(error.to_string()),
+                    ..SpeakerCalibrationResult::default()
+                }
+            }
+        },
+        Err(error) => {
+            warn!("RK ASR finalize skipped: {}", error);
+            SpeakerCalibrationResult {
+                error: Some(error.to_string()),
+                ..SpeakerCalibrationResult::default()
             }
         }
-        Err(error) => warn!("RK ASR finalize skipped: {}", error),
+    }
+}
+
+async fn parse_finalize_response(
+    response: reqwest::Response,
+    operation: &str,
+) -> Result<FinalizeResponse, TranscriptionError> {
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(TranscriptionError::EngineFailed(format!(
+            "RK ASR {} returned HTTP {}: {}",
+            operation,
+            status,
+            detail.chars().take(500).collect::<String>()
+        )));
+    }
+    response
+        .json::<FinalizeResponse>()
+        .await
+        .map_err(|error| TranscriptionError::EngineFailed(error.to_string()))
+}
+
+fn calibration_result(payload: FinalizeResponse) -> SpeakerCalibrationResult {
+    SpeakerCalibrationResult {
+        finalized: payload.finalized || payload.status.as_deref() == Some("completed"),
+        segments: payload.segments,
+        error: payload.error,
     }
 }
 
@@ -440,5 +551,17 @@ mod tests {
         let peak = prepared.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(peak > 0.7);
         assert!(prepared.len() > 3);
+    }
+
+    #[test]
+    fn completed_finalize_response_preserves_final_speaker_segments() {
+        let payload: FinalizeResponse = serde_json::from_str(
+            r#"{"status":"completed","segments":[{"start_ms":0,"end_ms":1200,"text":"你好","speaker_id":2,"speaker":"发言人 2"}]}"#,
+        )
+        .unwrap();
+        let result = calibration_result(payload);
+        assert!(result.finalized);
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(result.segments[0].speaker.as_deref(), Some("发言人 2"));
     }
 }

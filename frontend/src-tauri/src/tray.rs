@@ -47,7 +47,6 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, item_id: &str) {
                 let _ = window.eval("window.location.assign('/settings')");
             }
         }
-        "check_updates" => check_updates_handler(app),
         "quit" => app.exit(0),
         _ => {}
     }
@@ -86,12 +85,12 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
             // Handle result
             match stop_result {
-                Ok(_) => {
+                Ok(result) => {
                     log::info!("Tray toggle: Recording stopped successfully");
 
                     // Trigger frontend post-processing via event (works from any page)
                     // (SQLite save, navigation, analytics)
-                    if let Err(e) = app_clone.emit("recording-stop-complete", true) {
+                    if let Err(e) = app_clone.emit("recording-stop-complete", result) {
                         log::error!("Tray toggle: Failed to emit recording-stop-complete event: {}", e);
                     }
                 }
@@ -184,12 +183,12 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
         // Handle result
         match stop_result {
-            Ok(_) => {
+            Ok(result) => {
                 log::info!("Tray: Recording stopped successfully");
 
                 // Trigger frontend post-processing via event (works from any page)
                 // (SQLite save, navigation, analytics)
-                if let Err(e) = app_clone.emit("recording-stop-complete", true) {
+                if let Err(e) = app_clone.emit("recording-stop-complete", result) {
                     log::error!("Tray: Failed to emit recording-stop-complete event: {}", e);
                 }
             }
@@ -200,15 +199,6 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     });
-}
-
-fn check_updates_handler<R: Runtime>(app: &AppHandle<R>) {
-    focus_main_window(app);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.eval(
-            "window.dispatchEvent(new CustomEvent('check-updates-from-tray'))"
-        );
-    }
 }
 
 pub fn update_tray_menu<R: Runtime>(app: &AppHandle<R>) {
@@ -387,7 +377,6 @@ fn build_menu<R: Runtime>(
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&MenuItemBuilder::with_id("open_window", "打开主窗口").build(app)?)
         .item(&MenuItemBuilder::with_id("settings", "设置").build(app)?)
-        .item(&MenuItemBuilder::with_id("check_updates", "检查更新").build(app)?)
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&MenuItemBuilder::with_id("quit", "退出").build(app)?)
         .build()

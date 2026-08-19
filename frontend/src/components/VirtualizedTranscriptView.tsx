@@ -44,7 +44,7 @@ const VIRTUALIZATION_THRESHOLD = 10;
 
 function splitSpeakerPrefix(text: string, explicitLabel?: string): { speakerLabel?: string; text: string } {
     if (explicitLabel) return { speakerLabel: explicitLabel, text };
-    const match = text.match(/^(发言人[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
+    const match = text.match(/^((?:候选发言人|发言人)[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
     return match ? { speakerLabel: match[1], text: match[2] } : { text };
 }
 

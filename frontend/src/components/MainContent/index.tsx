@@ -74,7 +74,7 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
     <main className="hyos-main">
       <header className="hyos-topbar">
         <button className="hyos-brand" onClick={() => router.push('/')} aria-label="返回工作台">
-          <span>智能会议助手</span><i>-</i><b>HYOS</b>
+          <span>智能会议助手</span>
         </button>
         <div className="hyos-topbar-actions">
           {recordingActive && !isHome && (

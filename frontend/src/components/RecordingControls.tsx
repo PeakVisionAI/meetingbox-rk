@@ -10,11 +10,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Analytics from '@/lib/analytics';
 import { uiText } from '@/lib/uiText';
+import type { SpeakerCalibrationResult, StopRecordingResult } from '@/services/recordingService';
 
 interface RecordingControlsProps {
   isRecording: boolean;
   barHeights: string[];
-  onRecordingStop: (callApi?: boolean) => void;
+  onRecordingStop: (callApi?: boolean, speakerCalibration?: SpeakerCalibrationResult) => void;
   onRecordingStart: () => void;
   onTranscriptReceived: (summary: SummaryResponse) => void;
   onTranscriptionError?: (message: string) => void;
@@ -142,7 +143,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       const savePath = `${dataDir}/recording-${timestamp}.wav`;
       console.log('Saving recording to:', savePath);
       console.log('About to call stop_recording command');
-      const result = await invoke('stop_recording', {
+      const result = await invoke<StopRecordingResult>('stop_recording', {
         args: {
           save_path: savePath
         }
@@ -153,7 +154,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       setIsProcessing(false);
       // Track successful transcription
       Analytics.trackTranscriptionSuccess();
-      onRecordingStop(true);
+      onRecordingStop(true, result.speaker_calibration);
     } catch (error) {
       console.error('Failed to stop recording:', error);
       if (error instanceof Error) {

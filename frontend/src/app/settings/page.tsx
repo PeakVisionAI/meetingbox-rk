@@ -10,6 +10,7 @@ import { accessControlService } from '@/services/accessControlService';
 import { RecordingSettings } from '@/components/RecordingSettings';
 import { TranscriptSettings, TranscriptModelProps } from '@/components/TranscriptSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
+import { SummaryTemplateSettings } from '@/components/SummaryTemplateSettings';
 
 type SettingsTab = 'recording' | 'transcription' | 'summary' | 'account';
 
@@ -67,7 +68,7 @@ export default function SettingsPage() {
       <section className="hyos-panel hyos-settings-workspace">
         {tab === 'recording' && <RecordingSettings />}
         {tab === 'transcription' && <div><TranscriptSettings transcriptModelConfig={transcriptModelConfig} setTranscriptModelConfig={saveTranscriptConfig} /><div className="hyos-form-tip">{savingTranscript ? '正在保存转写配置…' : '选择变更后会立即保存到本机。'}</div></div>}
-        {tab === 'summary' && <SummaryModelSettings />}
+        {tab === 'summary' && <div className="hyos-summary-settings-stack"><SummaryModelSettings /><SummaryTemplateSettings /></div>}
         {tab === 'account' && <div className="hyos-account-settings"><div className="hyos-account"><span>管</span><div><b>管理员</b><small>admin · 唯一管理员账户</small></div><button className="hyos-secondary" onClick={() => setPasswordOpen(true)}><KeyRound size={15} />修改密码</button></div><div className="hyos-warning hyos-settings-warning"><ShieldAlert size={18} /><span><b>请妥善保管管理员密码</b><small>管理员密码无法找回。遗忘后需刷写设备，已有数据可能丢失。</small></span></div></div>}
       </section>
       {passwordOpen && <div className="hyos-modal-backdrop"><div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="change-password-title"><button className="hyos-modal-close" onClick={() => setPasswordOpen(false)} aria-label="关闭">×</button><h2 id="change-password-title">修改管理员密码</h2><p>修改后请立即妥善保存，新密码无法找回。</p><label>当前密码<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>新密码<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>再次输入新密码<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><div className="hyos-form-tip">新密码至少 8 个字符。</div><div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => setPasswordOpen(false)}>取消</button><button className="hyos-primary" onClick={changePassword} disabled={!currentPassword || !newPassword || !confirmPassword}>确认修改</button></div></div></div>}

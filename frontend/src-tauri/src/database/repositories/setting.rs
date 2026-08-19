@@ -26,7 +26,7 @@ pub struct SettingsRepository;
 
 pub const RK_SUMMARY_ENDPOINT: &str = "http://127.0.0.1:8040/v1";
 pub const RK_SUMMARY_MODEL: &str = "qwen3-4b";
-pub const RK_SUMMARY_MAX_TOKENS: i32 = 768;
+pub const RK_SUMMARY_MAX_TOKENS: i32 = 2048;
 pub const RK_SUMMARY_TEMPERATURE: f32 = 0.3;
 pub const RK_SUMMARY_TOP_P: f32 = 0.9;
 pub const RK_TRANSCRIPT_PROVIDER: &str = "rk-asr";

@@ -1140,7 +1140,14 @@ pub async fn get_meeting_audio_path<R: Runtime>(
     std::fs::create_dir_all(&playback_dir)
         .map_err(|e| format!("无法创建播放缓存目录: {}", e))?;
     let extension = source.extension().and_then(|ext| ext.to_str()).unwrap_or("mp4");
-    let destination = playback_dir.join(format!("{}.{}", meeting_id, extension));
+    // Audio-only MP4 recordings need an audio MIME type in RK WebKit. Keeping
+    // the bytes unchanged while exposing them as M4A makes Tauri serve audio/mp4.
+    let playback_extension = if extension.eq_ignore_ascii_case("mp4") {
+        "m4a"
+    } else {
+        extension
+    };
+    let destination = playback_dir.join(format!("{}.{}", meeting_id, playback_extension));
     let needs_copy = match (std::fs::metadata(&source), std::fs::metadata(&destination)) {
         (Ok(src), Ok(dst)) => src.len() != dst.len() || src.modified().ok() != dst.modified().ok(),
         _ => true,

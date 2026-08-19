@@ -8,14 +8,65 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 // Compile regex once and reuse (significant performance improvement for repeated calls)
-static THINKING_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").unwrap()
-});
+static THINKING_TAG_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").unwrap());
 
 const ENGLISH_BASE_SUMMARY_INSTRUCTION: &str =
     "**Write the summary/report in English regardless of transcript language; non-English prose is invalid.**";
-const CHINESE_BASE_SUMMARY_INSTRUCTION: &str =
-    "**请用中文撰写会议纪要，不要先写英文再翻译。**";
+const CHINESE_BASE_SUMMARY_INSTRUCTION: &str = "**请用中文撰写会议纪要，不要先写英文再翻译。**";
+const MIN_FINAL_REPORT_TOKENS: u32 = 4096;
+
+fn final_report_token_budget(configured: Option<u32>) -> Option<u32> {
+    Some(
+        configured
+            .unwrap_or(MIN_FINAL_REPORT_TOKENS)
+            .max(MIN_FINAL_REPORT_TOKENS),
+    )
+}
+
+fn normalized_section_heading(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if trimmed.starts_with("**") && trimmed.ends_with("**") && trimmed.len() > 4 {
+        return Some(trimmed.trim_matches('*').trim());
+    }
+    if trimmed.starts_with("##") {
+        return Some(trimmed.trim_start_matches('#').trim());
+    }
+    None
+}
+
+fn incomplete_template_sections(markdown: &str, template: &Template) -> Vec<String> {
+    let headings = markdown
+        .lines()
+        .filter_map(normalized_section_heading)
+        .collect::<Vec<_>>();
+    let missing = template
+        .sections
+        .iter()
+        .filter(|section| !headings.iter().any(|heading| *heading == section.title))
+        .map(|section| section.title.clone())
+        .collect::<Vec<_>>();
+
+    // Translated output can legitimately translate section titles. In that case,
+    // structural section count is the reliable completeness signal.
+    if missing.len() == template.sections.len() && headings.len() >= template.sections.len() {
+        Vec::new()
+    } else {
+        missing
+    }
+}
+
+fn validate_complete_report(markdown: &str, template: &Template) -> Result<(), String> {
+    let missing = incomplete_template_sections(markdown, template);
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "最终会议纪要生成不完整，缺少章节：{}",
+            missing.join("、")
+        ))
+    }
+}
 
 fn resolve_cached_english<'a>(
     cached: Option<&'a str>,
@@ -25,7 +76,11 @@ fn resolve_cached_english<'a>(
     let target_is_translation = summary_language
         .and_then(language_name_from_code)
         .is_some_and(|n| n != "English");
-    if target_is_translation { Some(cached_clean) } else { None }
+    if target_is_translation {
+        Some(cached_clean)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,6 +249,8 @@ fn build_final_report_system_prompt(
 5. 某节没有相关信息时，写「本节未提及」。
 6. 只输出填好的 Markdown 纪要。
 7. 不确定的内容请省略。
+8. 输出必须足够完整：保留主要议题的讨论过程、不同观点、明确决策、全部行动项、风险和遗留问题，不能只生成简短摘要。
+9. 源文本包含时间戳时，关键决策、行动项和依据必须保留对应的 MM:SS 时间戳。
 
 **各节填写说明：**
 {section_instructions}
@@ -214,6 +271,8 @@ fn build_final_report_system_prompt(
 5. If a section has no relevant info, write "None noted in this section."
 6. Output **only** the completed Markdown report.
 7. If unsure about something, omit it.
+8. Produce a complete report, retaining discussion context, differing views, explicit decisions, all action items, risks, and open questions instead of a brief abstract.
+9. When timestamps are present, preserve the relevant MM:SS timestamp for decisions, action items, and evidence.
 
 **SECTION-SPECIFIC INSTRUCTIONS:**
 {section_instructions}
@@ -412,10 +471,13 @@ pub async fn generate_meeting_summary(
         resolve_final_language_action(summary_language, detected_transcript_language);
     let instruction = summary_base_instruction(language_action);
 
-    let (mut english_markdown, successful_chunk_count) = if let Some(cached) =
-        resolve_cached_english(cached_english, summary_language)
-    {
-        info!("✓ Using cached English summary ({} chars), skipping pass 1", cached.len());
+    let cached_english = resolve_cached_english(cached_english, summary_language)
+        .filter(|cached| validate_complete_report(cached, template).is_ok());
+    let (mut english_markdown, successful_chunk_count) = if let Some(cached) = cached_english {
+        info!(
+            "✓ Using cached English summary ({} chars), skipping pass 1",
+            cached.len()
+        );
         (cached.to_string(), 1_i64)
     } else {
         let content_to_summarize: String;
@@ -456,7 +518,11 @@ pub async fn generate_meeting_summary(
                 // Check for cancellation before processing each chunk
                 if let Some(token) = cancellation_token {
                     if token.is_cancelled() {
-                        info!("Summary generation cancelled during chunk {}/{}", i + 1, num_chunks);
+                        info!(
+                            "Summary generation cancelled during chunk {}/{}",
+                            i + 1,
+                            num_chunks
+                        );
                         return Err("Summary generation was cancelled".to_string());
                     }
                 }
@@ -520,7 +586,8 @@ pub async fn generate_meeting_summary(
                 } else {
                     "You are an expert at synthesizing meeting summaries."
                 };
-                let user_prompt_combine = build_combine_summary_user_prompt(&combined_text, instruction);
+                let user_prompt_combine =
+                    build_combine_summary_user_prompt(&combined_text, instruction);
                 generate_summary(
                     client,
                     provider,
@@ -542,18 +609,23 @@ pub async fn generate_meeting_summary(
             };
         }
 
-        info!("Generating final markdown report with template: {}", template_id);
+        info!(
+            "Generating final markdown report with template: {}",
+            template_id
+        );
 
         // Generate markdown structure and section instructions using template methods
         let clean_template_markdown = template.to_markdown_structure();
         let section_instructions = template.to_section_instructions();
 
-        let final_system_prompt =
-            build_final_report_system_prompt(&section_instructions, &clean_template_markdown, instruction);
-
-        let mut final_user_prompt = format!(
-            "<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n"
+        let final_system_prompt = build_final_report_system_prompt(
+            &section_instructions,
+            &clean_template_markdown,
+            instruction,
         );
+
+        let mut final_user_prompt =
+            format!("<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n");
 
         if !custom_prompt.is_empty() {
             if is_chinese_summary_instruction(instruction) {
@@ -573,6 +645,7 @@ pub async fn generate_meeting_summary(
             }
         }
 
+        let final_max_tokens = final_report_token_budget(max_tokens);
         let raw_markdown = generate_summary(
             client,
             provider,
@@ -582,7 +655,7 @@ pub async fn generate_meeting_summary(
             &final_user_prompt,
             ollama_endpoint,
             custom_openai_endpoint,
-            max_tokens,
+            final_max_tokens,
             temperature,
             top_p,
             app_data_dir,
@@ -590,7 +663,31 @@ pub async fn generate_meeting_summary(
         )
         .await?;
 
-        let english_markdown = clean_llm_markdown_output(&raw_markdown);
+        let mut english_markdown = clean_llm_markdown_output(&raw_markdown);
+        if let Err(first_error) = validate_complete_report(&english_markdown, template) {
+            error!("{}; retrying final report once", first_error);
+            let retry_prompt = format!(
+                "{final_user_prompt}\n\nIMPORTANT: The previous response was incomplete. Output every template section in order and finish the final section."
+            );
+            let retry_raw = generate_summary(
+                client,
+                provider,
+                model_name,
+                api_key,
+                &final_system_prompt,
+                &retry_prompt,
+                ollama_endpoint,
+                custom_openai_endpoint,
+                final_max_tokens,
+                temperature,
+                top_p,
+                app_data_dir,
+                cancellation_token,
+            )
+            .await?;
+            english_markdown = clean_llm_markdown_output(&retry_raw);
+            validate_complete_report(&english_markdown, template)?;
+        }
         info!("Summary pass completed ({} chars)", english_markdown.len());
 
         (english_markdown, successful_chunk_count)
@@ -607,7 +704,7 @@ pub async fn generate_meeting_summary(
                 name,
                 ollama_endpoint,
                 custom_openai_endpoint,
-                max_tokens,
+                final_report_token_budget(max_tokens),
                 temperature,
                 top_p,
                 app_data_dir,
@@ -634,7 +731,7 @@ pub async fn generate_meeting_summary(
                     &english_markdown,
                     ollama_endpoint,
                     custom_openai_endpoint,
-                    max_tokens,
+                    final_report_token_budget(max_tokens),
                     temperature,
                     top_p,
                     app_data_dir,
@@ -645,7 +742,9 @@ pub async fn generate_meeting_summary(
             english_markdown = normalized.clone();
             normalized
         }
-        FinalLanguageAction::ReturnEnglish | FinalLanguageAction::ReturnGenerated => english_markdown.clone(),
+        FinalLanguageAction::ReturnEnglish | FinalLanguageAction::ReturnGenerated => {
+            english_markdown.clone()
+        }
     };
 
     info!("Summary generation completed successfully");
@@ -784,7 +883,8 @@ mod tests {
 
     #[test]
     fn chunk_summary_prompt_forces_english_base_output() {
-        let prompt = build_chunk_summary_user_prompt("会議の内容", ENGLISH_BASE_SUMMARY_INSTRUCTION);
+        let prompt =
+            build_chunk_summary_user_prompt("会議の内容", ENGLISH_BASE_SUMMARY_INSTRUCTION);
 
         assert!(prompt.contains(ENGLISH_BASE_SUMMARY_INSTRUCTION));
         assert!(prompt.contains("<transcript_chunk>"));
@@ -792,7 +892,10 @@ mod tests {
 
     #[test]
     fn combine_summary_prompt_forces_english_base_output() {
-        let prompt = build_combine_summary_user_prompt("chunk one\n---\nchunk two", ENGLISH_BASE_SUMMARY_INSTRUCTION);
+        let prompt = build_combine_summary_user_prompt(
+            "chunk one\n---\nchunk two",
+            ENGLISH_BASE_SUMMARY_INSTRUCTION,
+        );
 
         assert!(prompt.contains(ENGLISH_BASE_SUMMARY_INSTRUCTION));
         assert!(prompt.contains("<summaries>"));
@@ -800,7 +903,11 @@ mod tests {
 
     #[test]
     fn final_report_prompt_forces_english_base_output() {
-        let prompt = build_final_report_system_prompt("Fill the section", "# <Add Title here>", ENGLISH_BASE_SUMMARY_INSTRUCTION);
+        let prompt = build_final_report_system_prompt(
+            "Fill the section",
+            "# <Add Title here>",
+            ENGLISH_BASE_SUMMARY_INSTRUCTION,
+        );
 
         assert!(prompt.contains(ENGLISH_BASE_SUMMARY_INSTRUCTION));
         assert!(prompt.contains("SECTION-SPECIFIC INSTRUCTIONS"));
@@ -808,9 +915,53 @@ mod tests {
 
     #[test]
     fn final_report_prompt_uses_chinese_when_instruction_is_chinese() {
-        let prompt = build_final_report_system_prompt("填写本节", "# 标题", CHINESE_BASE_SUMMARY_INSTRUCTION);
+        let prompt = build_final_report_system_prompt(
+            "填写本节",
+            "# 标题",
+            CHINESE_BASE_SUMMARY_INSTRUCTION,
+        );
         assert!(prompt.contains("本节未提及"));
         assert!(prompt.contains(CHINESE_BASE_SUMMARY_INSTRUCTION));
+    }
+
+    #[test]
+    fn final_report_budget_never_uses_truncating_2048_limit() {
+        assert_eq!(final_report_token_budget(None), Some(4096));
+        assert_eq!(final_report_token_budget(Some(2048)), Some(4096));
+        assert_eq!(final_report_token_budget(Some(8192)), Some(8192));
+    }
+
+    #[test]
+    fn final_report_validation_detects_truncated_template() {
+        let template = Template {
+            name: "完整纪要".to_string(),
+            description: "测试".to_string(),
+            sections: vec![
+                crate::summary::templates::TemplateSection {
+                    title: "会议概览".to_string(),
+                    instruction: "概览".to_string(),
+                    format: "paragraph".to_string(),
+                    item_format: None,
+                    example_item_format: None,
+                },
+                crate::summary::templates::TemplateSection {
+                    title: "行动项".to_string(),
+                    instruction: "行动".to_string(),
+                    format: "list".to_string(),
+                    item_format: None,
+                    example_item_format: None,
+                },
+            ],
+        };
+
+        let error =
+            validate_complete_report("# 标题\n\n**会议概览**\n\n内容", &template).unwrap_err();
+        assert!(error.contains("行动项"));
+        assert!(validate_complete_report(
+            "# 标题\n\n**会议概览**\n\n内容\n\n**行动项**\n\n- 完成",
+            &template,
+        )
+        .is_ok());
     }
 
     #[test]
@@ -881,13 +1032,11 @@ mod tests {
 
     #[test]
     fn cancelled_english_normalization_is_not_swallowed() {
-        assert!(
-            english_markdown_after_normalization_result(
-                "# Original",
-                Err("Summary generation was cancelled".to_string())
-            )
-            .is_err()
-        );
+        assert!(english_markdown_after_normalization_result(
+            "# Original",
+            Err("Summary generation was cancelled".to_string())
+        )
+        .is_err());
     }
 
     // resolve_cached_english matrix -------------------------------------------
@@ -925,18 +1074,27 @@ mod tests {
 
     #[test]
     fn valid_cache_french_target_returns_cache() {
-        assert_eq!(resolve_cached_english(Some("body"), Some("fr")), Some("body"));
+        assert_eq!(
+            resolve_cached_english(Some("body"), Some("fr")),
+            Some("body")
+        );
     }
 
     #[test]
     fn valid_cache_unknown_language_returns_none() {
         // Unknown code -> language_name_from_code returns None -> not a translation
-        assert_eq!(resolve_cached_english(Some("body"), Some("zz-unknown")), None);
+        assert_eq!(
+            resolve_cached_english(Some("body"), Some("zz-unknown")),
+            None
+        );
     }
 
     #[test]
     fn uppercase_translation_code_returns_cache() {
-        assert_eq!(resolve_cached_english(Some("body"), Some("FR")), Some("body"));
+        assert_eq!(
+            resolve_cached_english(Some("body"), Some("FR")),
+            Some("body")
+        );
     }
 
     #[test]

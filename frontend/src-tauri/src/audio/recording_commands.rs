@@ -62,6 +62,12 @@ pub struct TranscriptionStatus {
     pub last_activity_ms: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct StopRecordingResult {
+    pub speaker_calibration:
+        super::transcription::rk_asr_provider::SpeakerCalibrationResult,
+}
+
 // ============================================================================
 // RECORDING COMMANDS
 // ============================================================================
@@ -482,7 +488,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
     _args: RecordingArgs,
-) -> Result<(), String> {
+) -> Result<StopRecordingResult, String> {
     info!(
         "🛑 Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
     );
@@ -490,7 +496,7 @@ pub async fn stop_recording<R: Runtime>(
     // Check if recording is active
     if !IS_RECORDING.load(Ordering::SeqCst) {
         info!("Recording was not active");
-        return Ok(());
+        return Ok(StopRecordingResult::default());
     }
 
     // Emit shutdown progress to frontend
@@ -609,7 +615,16 @@ pub async fn stop_recording<R: Runtime>(
         info!("ℹ️ No transcription task found to wait for");
     }
 
-    super::transcription::rk_asr_provider::finalize_current_meeting().await;
+    let _ = app.emit(
+        "recording-shutdown-progress",
+        serde_json::json!({
+            "stage": "finalizing_speakers",
+            "message": "正在校准说话人...",
+            "progress": 60
+        }),
+    );
+    let speaker_calibration =
+        super::transcription::rk_asr_provider::finalize_current_meeting().await;
 
     // Step 3: Now safely unload Whisper model after ALL chunks are processed
     let _ = app.emit(
@@ -894,7 +909,9 @@ pub async fn stop_recording<R: Runtime>(
     crate::tray::update_tray_menu(&app);
 
     info!("🎉 Recording stopped successfully with ZERO transcript chunks lost");
-    Ok(())
+    Ok(StopRecordingResult {
+        speaker_calibration,
+    })
 }
 
 /// Check if recording is active

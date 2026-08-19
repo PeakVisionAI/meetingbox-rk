@@ -1,4 +1,5 @@
 use crate::summary::templates;
+use crate::summary::templates::{Template, TemplateSection};
 use serde::{Deserialize, Serialize};
 use tauri::Runtime;
 use tracing::{info, warn};
@@ -14,6 +15,8 @@ pub struct TemplateInfo {
 
     /// Brief description of the template's purpose
     pub description: String,
+
+    pub is_custom: bool,
 }
 
 /// Detailed template structure for preview/debugging
@@ -29,7 +32,9 @@ pub struct TemplateDetails {
     pub description: String,
 
     /// List of section titles in order
-    pub sections: Vec<String>,
+    pub sections: Vec<TemplateSection>,
+
+    pub is_custom: bool,
 }
 
 /// Lists all available templates
@@ -50,6 +55,7 @@ pub async fn api_list_templates<R: Runtime>(
     let template_infos: Vec<TemplateInfo> = templates
         .into_iter()
         .map(|(id, name, description)| TemplateInfo {
+            is_custom: templates::is_custom_template(&id),
             id,
             name,
             description,
@@ -73,26 +79,49 @@ pub async fn api_get_template_details<R: Runtime>(
     _app: tauri::AppHandle<R>,
     template_id: String,
 ) -> Result<TemplateDetails, String> {
-    info!("api_get_template_details called for template_id: {}", template_id);
+    info!(
+        "api_get_template_details called for template_id: {}",
+        template_id
+    );
 
     let template = templates::get_template(&template_id)?;
 
-    let section_titles: Vec<String> = template
-        .sections
-        .iter()
-        .map(|section| section.title.clone())
-        .collect();
-
     let details = TemplateDetails {
+        is_custom: templates::is_custom_template(&template_id),
         id: template_id,
         name: template.name,
         description: template.description,
-        sections: section_titles,
+        sections: template.sections,
     };
 
     info!("Retrieved template details for '{}'", details.name);
 
     Ok(details)
+}
+
+#[tauri::command]
+pub async fn api_save_custom_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+    template: Template,
+) -> Result<TemplateInfo, String> {
+    crate::access_control::require_admin_authenticated()?;
+    templates::save_custom_template(&template_id, &template)?;
+    Ok(TemplateInfo {
+        id: template_id,
+        name: template.name,
+        description: template.description,
+        is_custom: true,
+    })
+}
+
+#[tauri::command]
+pub async fn api_delete_custom_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<(), String> {
+    crate::access_control::require_admin_authenticated()?;
+    templates::delete_custom_template(&template_id)
 }
 
 /// Validates a custom template JSON string

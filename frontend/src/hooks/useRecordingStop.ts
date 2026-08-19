@@ -13,17 +13,47 @@ import {
   detectAndCacheSummaryLanguage,
 } from '@/lib/summary-language-preferences';
 import { accessControlService } from '@/services/accessControlService';
-import { pendingMeetingAccess } from '@/services/pendingMeetingAccess';
+import type { SpeakerCalibrationResult } from '@/services/recordingService';
+import type { Transcript } from '@/types';
+import { minuteSummaryService } from '@/services/minuteSummaryService';
+import { finalizeMinuteSummaries } from '@/hooks/useMinuteSummaries';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
 interface UseRecordingStopReturn {
-  handleRecordingStop: (callApi: boolean) => Promise<void>;
+  handleRecordingStop: (
+    callApi: boolean,
+    speakerCalibration?: SpeakerCalibrationResult,
+  ) => Promise<void>;
   isStopping: boolean;
   isProcessingTranscript: boolean;
   isSavingTranscript: boolean;
   summaryStatus: SummaryStatus;
   setIsStopping: (value: boolean) => void;
+}
+
+export function finalizedSpeakerSegmentsToTranscripts(
+  calibration: SpeakerCalibrationResult,
+  fallback: Transcript[],
+): Transcript[] {
+  if (!calibration.finalized || calibration.segments.length === 0) return fallback;
+  return calibration.segments.map((segment, index) => {
+    const previous = fallback[index];
+    const speaker = segment.speaker?.trim();
+    const text = segment.text.trim();
+    return {
+      id: previous?.id || `final-speaker-${index + 1}`,
+      text: speaker ? `${speaker}：${text}` : text,
+      timestamp: previous?.timestamp || new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      sequence_id: index + 1,
+      chunk_start_time: segment.start_ms / 1000,
+      is_partial: false,
+      confidence: previous?.confidence,
+      audio_start_time: segment.start_ms / 1000,
+      audio_end_time: segment.end_ms / 1000,
+      duration: Math.max(0, segment.end_ms - segment.start_ms) / 1000,
+    };
+  });
 }
 
 /**
@@ -120,7 +150,10 @@ export function useRecordingStop(
   }, [router]);
 
   // Main recording stop handler
-  const handleRecordingStop = useCallback(async (isCallApi: boolean) => {
+  const handleRecordingStop = useCallback(async (
+    isCallApi: boolean,
+    speakerCalibration?: SpeakerCalibrationResult,
+  ) => {
     if (recordingStoppedDataRef.current) {
       await recordingStoppedDataRef.current;
     }
@@ -240,7 +273,18 @@ export function useRecordingStop(
         setStatus(RecordingStatus.SAVING, 'Saving meeting to database...');
 
         // Get fresh transcript state (ALL transcripts including late ones)
-        const freshTranscripts = [...transcriptsRef.current];
+        const freshTranscripts = speakerCalibration
+          ? finalizedSpeakerSegmentsToTranscripts(
+              speakerCalibration,
+              [...transcriptsRef.current],
+            )
+          : [...transcriptsRef.current];
+
+        if (speakerCalibration?.error) {
+          toast.warning('说话人校准未完成', {
+            description: '已保留实时候选标签，可稍后重新处理录音。',
+          });
+        }
 
         // Get folder_path and meeting_name from recording-stopped event
         const folderPath = sessionStorage.getItem('last_recording_folder_path');
@@ -292,8 +336,18 @@ export function useRecordingStop(
           }
 
           console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
-          await accessControlService.setMeetingPassword(meetingId, pendingMeetingAccess.get());
-          pendingMeetingAccess.clear();
+          await accessControlService.setMeetingPassword(meetingId, null);
+          const summaryTemplateId = sessionStorage.getItem('pending_summary_template_id') || 'standard_meeting';
+          try {
+            const minuteSummaries = await finalizeMinuteSummaries(freshTranscripts, summaryTemplateId);
+            await minuteSummaryService.save(
+              meetingId,
+              minuteSummaries.filter((summary) => summary.status === 'completed'),
+            );
+          } catch (error) {
+            console.warn('Failed to finalize minute summaries:', error);
+            toast.warning('分时摘要暂未完整写入会议文件', { description: '完整逐字稿已保存，最终总结仍可正常生成。' });
+          }
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
 
@@ -305,6 +359,8 @@ export function useRecordingStop(
           sessionStorage.removeItem('last_recording_meeting_name');
           // Clean up IndexedDB meeting ID (redundant with markMeetingAsSaved cleanup, but ensures cleanup)
           sessionStorage.removeItem('indexeddb_current_meeting_id');
+          sessionStorage.removeItem('pending_minute_summaries');
+          sessionStorage.removeItem('pending_summary_template_id');
 
           // Refetch meetings and set current meeting
           await refetchMeetings();
@@ -341,7 +397,8 @@ export function useRecordingStop(
 
           // Auto-navigate after a short delay with source parameter
           setTimeout(() => {
-            router.push(`/meeting-details?id=${meetingId}&source=recording&askSummary=1`);
+            const template = encodeURIComponent(summaryTemplateId);
+            router.push(`/meeting-details?id=${meetingId}&source=recording&askSummary=1&setPassword=1&template=${template}`);
             clearTranscripts()
             Analytics.trackPageView('meeting_details');
 

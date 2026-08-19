@@ -18,7 +18,7 @@ import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Download, FolderOpen, ArrowLeft } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { accessControlService } from '@/services/accessControlService';
 
 export default function PageContent({
@@ -51,6 +51,7 @@ export default function PageContent({
   onLoadMore?: () => void;
 }) {
   const router = useRouter();
+  const initialTemplate = useSearchParams().get('template') || 'standard_meeting';
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
     summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
@@ -73,7 +74,7 @@ export default function PageContent({
 
   // Custom hooks
   const meetingData = useMeetingData({ meeting, summaryData, onMeetingUpdated });
-  const templates = useTemplates();
+  const templates = useTemplates(initialTemplate);
 
   // Callback to register the modal open function
   const handleRegisterModalOpen = (openFn: () => void) => {
