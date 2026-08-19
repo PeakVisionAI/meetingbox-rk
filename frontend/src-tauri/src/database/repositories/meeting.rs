@@ -92,6 +92,7 @@ impl MeetingsRepository {
                     audio_start_time: t.audio_start_time,
                     audio_end_time: t.audio_end_time,
                     duration: t.duration,
+                    speaker: t.speaker,
                 })
                 .collect::<Vec<_>>();
 
@@ -149,11 +150,12 @@ impl MeetingsRepository {
         .fetch_one(pool)
         .await?;
 
-        // Get paginated transcripts ordered by audio_start_time
+        // Keep timestamped segments in chronological order and place legacy
+        // rows without recording-relative timing after them.
         let transcripts = sqlx::query_as::<_, Transcript>(
             "SELECT * FROM transcripts
              WHERE meeting_id = ?
-             ORDER BY audio_start_time ASC
+             ORDER BY audio_start_time IS NULL ASC, audio_start_time ASC, timestamp ASC, id ASC
              LIMIT ? OFFSET ?"
         )
         .bind(meeting_id)

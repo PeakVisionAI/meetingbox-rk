@@ -3,6 +3,7 @@
 // Slim Tauri command layer for recording functionality.
 // Delegates to transcription and recording modules for actual implementation.
 
+use crate::state::AppState;
 use anyhow::Result;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -112,6 +113,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         return Err(validation_error);
     }
     info!("✅ Transcription model validation passed");
+    refresh_hotwords(&app).await;
     let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
     info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
@@ -281,9 +283,9 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
-        "message": "Recording started successfully with parallel processing",
-        "devices": ["Default Microphone", "Default System Audio"],
-        "workers": 3
+            "message": "Recording started successfully with parallel processing",
+            "devices": ["Default Microphone", "Default System Audio"],
+            "workers": 3
     })).map_err(|e| e.to_string())?;
 
     // Update tray menu to reflect recording state
@@ -340,6 +342,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         return Err(validation_error);
     }
     info!("✅ Transcription model validation passed");
+    refresh_hotwords(&app).await;
     let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
     info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
@@ -468,12 +471,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
-        "message": "Recording started with custom devices and parallel processing",
-        "devices": [
-            mic_device_name.unwrap_or_else(|| "Default Microphone".to_string()),
-            system_device_name.unwrap_or_else(|| "Default System Audio".to_string())
-        ],
-        "workers": 3
+            "message": "Recording started with custom devices and parallel processing",
+            "devices": [
+                mic_device_name.unwrap_or_else(|| "Default Microphone".to_string()),
+                system_device_name.unwrap_or_else(|| "Default System Audio".to_string())
+            ],
+            "workers": 3
     })).map_err(|e| e.to_string())?;
 
     // Update tray menu to reflect recording state
@@ -482,6 +485,17 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     info!("✅ Recording started with custom devices using async-first approach");
 
     Ok(())
+}
+
+async fn refresh_hotwords<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<AppState>();
+    match crate::productivity::load_enabled_hotwords(state.db_manager.pool()).await {
+        Ok(hotwords) => {
+            info!("Loaded {} enabled hotwords for RK ASR", hotwords.len());
+            super::transcription::rk_asr_provider::set_hotwords(hotwords);
+        }
+        Err(error) => warn!("Unable to load hotwords; continuing without them: {}", error),
+    }
 }
 
 /// Stop recording with optimized graceful shutdown ensuring NO transcript chunks are lost
@@ -776,11 +790,11 @@ pub async fn stop_recording<R: Runtime>(
             app.clone().state(),
             None,
         )
-        .await
-        {
-            Ok(Some(config)) => Some((config.provider, config.model)),
-            _ => None,
-        };
+            .await
+            {
+                Ok(Some(config)) => Some((config.provider, config.model)),
+                _ => None,
+            };
 
         let (summary_provider, summary_model) = summary_config
             .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
@@ -1098,14 +1112,14 @@ impl From<DeviceEvent> for DeviceEventResponse {
         match event {
             DeviceEvent::DeviceDisconnected { device_name, device_type } => {
                 DeviceEventResponse::DeviceDisconnected {
-                    device_name,
-                    device_type: format!("{:?}", device_type),
+                device_name,
+                device_type: format!("{:?}", device_type),
                 }
             }
             DeviceEvent::DeviceReconnected { device_name, device_type } => {
                 DeviceEventResponse::DeviceReconnected {
-                    device_name,
-                    device_type: format!("{:?}", device_type),
+                device_name,
+                device_type: format!("{:?}", device_type),
                 }
             }
             DeviceEvent::DeviceListChanged => DeviceEventResponse::DeviceListChanged,

@@ -10,7 +10,7 @@ import { RecordingStatusBar } from "./RecordingStatusBar";
 import { motion } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
 import { uiText } from "@/lib/uiText";
-import { Headphones } from "lucide-react";
+import { Headphones, Pencil } from "lucide-react";
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -37,14 +37,15 @@ export interface VirtualizedTranscriptViewProps {
     loadedCount?: number;
     onLoadMore?: () => void;
     onPlaySegment?: (timestamp: number, endTime?: number) => void;
+    onEditSegment?: (segment: TranscriptSegmentData) => void;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
 const VIRTUALIZATION_THRESHOLD = 10;
 
 function splitSpeakerPrefix(text: string, explicitLabel?: string): { speakerLabel?: string; text: string } {
-    if (explicitLabel) return { speakerLabel: explicitLabel, text };
-    const match = text.match(/^((?:候选发言人|发言人)[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
+    const match = text.match(/^((?:候选发言人|发言人待识别|发言人(?:\s*[^：:\s]{1,20})?))[：:]\s*([\s\S]*)$/);
+    if (explicitLabel) return { speakerLabel: explicitLabel, text: match?.[2] ?? text };
     return match ? { speakerLabel: match[1], text: match[2] } : { text };
 }
 
@@ -83,6 +84,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     isStreaming,
     showConfidence,
     onPlaySegment,
+    onEditSegment,
 }: {
     id: string;
     timestamp: number;
@@ -93,6 +95,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     isStreaming: boolean;
     showConfidence: boolean;
     onPlaySegment?: (timestamp: number, endTime?: number) => void;
+    onEditSegment?: (segment: TranscriptSegmentData) => void;
 }) {
     const parsed = splitSpeakerPrefix(text, speakerLabel);
     const displayText = cleanStopWords(parsed.text) || (parsed.text.trim() === '' ? uiText.silence : parsed.text);
@@ -133,6 +136,17 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <Headphones size={15} />
                     </button>
                 )}
+                {onEditSegment && !isStreaming && (
+                    <button
+                        type="button"
+                        className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-blue-50 hover:text-blue-600"
+                        onClick={() => onEditSegment({ id, timestamp, endTime, text: parsed.text, confidence, speakerLabel: parsed.speakerLabel })}
+                        title="校对这一段转写"
+                        aria-label="校对这一段转写"
+                    >
+                        <Pencil size={14} />
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -153,6 +167,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     loadedCount = 0,
     onLoadMore,
     onPlaySegment,
+    onEditSegment,
 }) => {
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -324,6 +339,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                         onPlaySegment={onPlaySegment}
+                                        onEditSegment={onEditSegment}
                                     />
                                 </div>
                             );
@@ -383,6 +399,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                         onPlaySegment={onPlaySegment}
+                                        onEditSegment={onEditSegment}
                                     />
                                 </motion.div>
                             );

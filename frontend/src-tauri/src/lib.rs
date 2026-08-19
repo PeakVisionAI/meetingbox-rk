@@ -51,6 +51,7 @@ pub mod anthropic;
 pub mod groq;
 pub mod openrouter;
 pub mod parakeet_engine;
+pub mod productivity;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -649,6 +650,20 @@ pub fn run() {
             access_control::export_meeting_text,
             access_control::meeting_uses_independent_password,
             api::api_search_transcripts,
+            productivity::api_search_meetings,
+            productivity::api_list_speaker_labels,
+            productivity::api_save_speaker_label,
+            productivity::api_merge_speaker_labels,
+            productivity::api_list_speaker_contacts,
+            productivity::api_save_speaker_contact,
+            productivity::api_list_hotwords,
+            productivity::api_save_hotword,
+            productivity::api_delete_hotword,
+            productivity::api_list_meeting_actions,
+            productivity::api_extract_meeting_actions,
+            productivity::api_update_meeting_action,
+            productivity::api_update_transcript,
+            productivity::api_export_meeting_format,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,
