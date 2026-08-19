@@ -1,271 +1,176 @@
-<div align="center" style="border-bottom: none">
-    <h1>
-        <img src="docs/Meetily-6.png" style="border-radius: 10px;" />
-        <br>
-        Privacy-First AI Meeting Assistant
-    </h1>
-    <a href="https://trendshift.io/repositories/21958" target="_blank"><img src="https://trendshift.io/api/badge/repositories/21958" alt="Zackriya-Solutions%2Fmeetily | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-    <br>
-    <br>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases/"><img src="https://img.shields.io/badge/Pre_Release-Link-brightgreen" alt="Pre-Release"></a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/zackriya-solutions/meeting-minutes?style=flat">
-</a>
- <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"> <img alt="GitHub Downloads (all assets, all releases)" src="https://img.shields.io/github/downloads/zackriya-solutions/meeting-minutes/total?style=plastic"> </a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img src="https://img.shields.io/badge/License-MIT-blue" alt="License"></a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img src="https://img.shields.io/badge/Supported_OS-macOS,_Windows-white" alt="Supported OS"></a>
-    <a href="https://github.com/Zackriya-Solutions/meeting-minutes/releases"><img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/zackriya-solutions/meeting-minutes?include_prereleases&color=yellow">
-</a>
-    <br>
-    <h3>
-    <br>
-    Open Source • Privacy-First • Enterprise-Ready
-    </h3>
-    <p align="center">
-    Get latest <a href="https://www.zackriya.com/meetily-subscribe/"><b>Product updates</b></a> <br><br>
-    <a href="https://meetily.ai"><b>Website</b></a> •
-    <a href="https://www.linkedin.com/company/106363062/"><b>LinkedIn</b></a> •
-    <a href="https://discord.gg/crRymMQBFH"><b>Meetily Discord</b></a> •
-    <a href="https://discord.com/invite/vCFJvN4BwJ"><b>Privacy-First AI</b></a> •
-    <a href="https://www.reddit.com/r/meetily/"><b>Reddit</b></a>
-</p>
-    <p align="center">
+# 峰瞰密会智盒
 
-A privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on your infrastructure. Built by expert AI engineers passionate about data sovereignty and open source solutions. Perfect for enterprises that need advanced meeting intelligence without compromising on privacy, compliance, or control.
+峰瞰密会智盒（MeetingBox RK）是面向会议室设备的桌面会议助手。它在本地完成录音、实时转写、说话人处理、会议文件管理和会议纪要生成，适合部署在 Ubuntu 与 Rockchip RK3588/RK1828 设备上。
 
-</p>
+## 主要能力
 
-<p align="center">
-    <img src="docs/meetily_demo.gif" width="650" alt="Meetily Demo" />
-    <br>
-    <a href="https://youtu.be/6FnhSC_eSz8">View full Demo Video</a>
-</p>
+- 快速开始会议并实时显示逐字稿。
+- 使用语音活动检测减少静音阶段的识别请求。
+- 实时阶段显示候选发言人；会议结束后根据声纹和时长进行说话人聚类。
+- 每 10 分钟生成上一时段的会议分时摘要。
+- 会议结束后生成完整会议纪要，并支持自定义总结模板。
+- 在应用内查看会议文件、逐字稿、摘要和录音。
+- 录音、转写、摘要和数据库默认保存在本机。
+- 通过 Tauri 桌面应用运行，不依赖浏览器开发服务器作为生产入口。
 
-</div>
+## 技术架构
 
----
-
-> **Meetily PRO Upgrade Offer** - Meetily PRO is available for users who need enhanced accuracy, advanced exports, custom summary workflows, and team-ready features. Use coupon code **LAUNCH20** for **20% off** until the next Meetily Community Edition release. Speaker diarization is also planned for PRO in mid-June. [Explore Meetily PRO →](https://meetily.ai/pro/)
-
----
-
-<details>
-<summary>Table of Contents</summary>
-
-- [Introduction](#introduction)
-- [Why Meetily?](#why-meetily)
-- [Features](#features)
-- [Installation](#installation)
-- [Key Features in Action](#key-features-in-action)
-- [System Architecture](#system-architecture)
-- [For Developers](#for-developers)
-- [Meetily PRO](#meetily-pro)
-- [Contributing](#contributing)
-- [License](#license)
-
-</details>
-
-## Introduction
-
-Meetily is a privacy-first AI meeting assistant that runs entirely on your local machine. It captures your meetings, transcribes them in real-time, and generates summaries, all without sending any data to the cloud. This makes it the perfect solution for professionals and enterprises who need to maintain complete control over their sensitive information.
-
-## Why Meetily?
-
-While there are many meeting transcription tools available, this solution stands out by offering:
-
-- **Privacy First:** All processing happens locally on your device.
-- **Cost-Effective:** Uses open-source AI models instead of expensive APIs.
-- **Flexible:** Works offline and supports multiple meeting platforms.
-- **Customizable:** Self-host and modify for your specific needs.
-
-<details>
-<summary>The Privacy Problem</summary>
-
-Meeting AI tools create significant privacy and compliance risks across all sectors:
-
-- **$4.4M average cost per data breach** (IBM 2024)
-- **€5.88 billion in GDPR fines** issued by 2025
-- **400+ unlawful recording cases** filed in California this year
-
-Whether you're a defense consultant, enterprise executive, legal professional, or healthcare provider, your sensitive discussions shouldn't live on servers you don't control. Cloud meeting tools promise convenience but deliver privacy nightmares with unclear data storage practices and potential unauthorized access.
-
-**Meetily solves this:** Complete data sovereignty on your infrastructure, zero vendor lock-in, and full control over your sensitive conversations.
-
-</details>
-
-## Features
-
-- **Local First:** All processing is done on your machine. No data ever leaves your computer.
-- **Real-time Transcription:** Get a live transcript of your meeting as it happens.
-- **AI-Powered Summaries:** Generate summaries of your meetings using powerful language models.
-- **Multi-Platform:** Works on macOS, Windows, and Linux.
-- **Open Source:** Meetily is open source and free to use.
-- **Flexible AI Provider Support:** Choose from Ollama (local), Claude, Groq, OpenRouter, or use your own OpenAI-compatible endpoint.
-
-## Installation
-
-### 🪟 **Windows**
-
-1. Download the latest `x64-setup.exe` from [Releases](https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest)
-2. Run the installer
-
-### 🍎 **macOS**
-
-1. Download `meetily_0.4.0_aarch64.dmg` from [Releases](https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest)
-2. Open the downloaded `.dmg` file
-3. Drag **Meetily** to your Applications folder
-4. Open **Meetily** from Applications folder
-
-### 🐧 **Linux**
-
-Build from source following our detailed guides:
-
-- [Building on Linux](docs/building_in_linux.md)
-- [General Build Instructions](docs/BUILDING.md)
-
-**Quick start:**
-
-```bash
-git clone https://github.com/Zackriya-Solutions/meeting-minutes
-cd meeting-minutes/frontend
-pnpm install
-./build-gpu.sh
+```text
+Next.js / React
+        │ Tauri commands and events
+Rust / Tauri desktop core
+        ├─ 音频采集、重采样和录音保存
+        ├─ 实时 ASR 与会后完整转写
+        ├─ 说话人分段、声纹聚类
+        ├─ SQLite 会议数据库
+        └─ 分时摘要与最终会议纪要
 ```
 
-## Key Features in Action
+RK 设备上的推理服务由部署配置决定。当前验收基线覆盖 RK3588 ASR、说话人处理和 RK1828 摘要服务，详见 [RK 部署与验收基线](docs/RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md)。
 
-### 🎯 Local Transcription
+## 仓库结构
 
-Transcribe meetings entirely on your device using **Whisper** or **Parakeet** models. No cloud required.
+```text
+frontend/                  Next.js 前端与 Tauri 应用
+frontend/src-tauri/        Rust 核心、数据库、音频和打包配置
+frontend/src-tauri/scripts/许可证、设备指纹和交付脚本
+llama-helper/              摘要引擎兼容 sidecar
+docs/                      构建、架构、RK 部署和交付说明
+backend/                   历史 FastAPI/Whisper 归档，不是当前生产入口
+```
 
-<p align="center">
-    <img src="docs/home.png" width="650" style="border-radius: 10px;" alt="Meetily Demo" />
-</p>
+## 开发环境
 
-### 📥 Import & Enhance `Beta`
+建议在目标 Ubuntu/aarch64 设备或等效 Linux 环境构建正式包。开发前准备：
 
-Import existing audio files to generate transcripts, or enhance to re-transcribe any recorded meeting with a different model or language, all processed locally.
+- Node.js 与 pnpm
+- Rust、Cargo、CMake 和 C/C++ 编译工具链
+- Tauri 2 所需的 WebKitGTK、GTK、AppIndicator 等系统依赖
+- 目标设备对应的音频、显示和 Rockchip 驱动
 
-> Contributed by [Jeremi Joslin](https://github.com/jeremi), improved by [Vishnu P S](https://github.com/p-s-vishnu) and [Mohammed Safvan](https://github.com/mohammedsafvan)
+完整系统依赖请参考 [Linux 构建说明](docs/building_in_linux.md) 和 [通用构建说明](docs/BUILDING.md)。
 
-<p align="center">
-    <img src="docs/meetily-export.gif" width="650" style="border-radius: 10px;" alt="Import and Enhance" />
-</p>
+安装前端依赖：
 
-### 🤖 AI-Powered Summaries
+```bash
+cd frontend
+pnpm install
+```
 
-Generate meeting summaries with your choice of AI provider. **Ollama** (local) is recommended, with support for Claude, Groq, OpenRouter, and OpenAI.
+## 本地运行
 
-<p align="center">
-    <img src="docs/summary.png" width="650" style="border-radius: 10px;" alt="Summary generation" />
-</p>
+开发模式：
 
-<p align="center">
-    <img src="docs/editor1.png" width="650" style="border-radius: 10px;" alt="Editor Summary generation" />
-</p>
+```bash
+cd frontend
+pnpm tauri:dev:cpu
+```
 
-### 🔒 Privacy-First Design
+如果只需要检查前端页面：
 
-All data stays on your machine. Transcription models, recordings, and transcripts are stored locally.
+```bash
+cd frontend
+pnpm dev
+```
 
-<p align="center">
-    <img src="docs/settings.png" width="650" style="border-radius: 10px;" alt="Local Transcription and storage" />
-</p>
+浏览器开发服务器只用于 UI 开发，不代表完整的桌面录音、Tauri bridge 或生产部署状态。
 
-### 🌐 Custom OpenAI Endpoint Support
+## 构建发布包
 
-Use your own OpenAI-compatible endpoint for AI summaries. Perfect for organizations with custom AI infrastructure or preferred providers.
+CPU 构建：
 
-<p align="center">
-    <img src="docs/custom.png" width="650" style="border-radius: 10px;" alt="Custom OpenAI Endpoint Configuration" />
-</p>
+```bash
+cd frontend
+pnpm tauri:build:cpu
+```
 
-### 🎙️ Professional Audio Mixing
+构建产物位于 `frontend/src-tauri/target/release/bundle/`。正式 RK 设备应在 Ubuntu/aarch64 实机上构建并验收，常用产物为 Debian 包或 AppImage。构建时会执行前端生产构建、Rust release 构建和 Tauri 打包。
 
-Capture microphone and system audio simultaneously with intelligent ducking and clipping prevention.
+构建前检查：
 
-<p align="center">
-    <img src="docs/audio.png" width="650" style="border-radius: 10px;" alt="Device selection" />
-</p>
+```bash
+pnpm exec tsc --noEmit --pretty false
+cd ..
+cargo check --locked
+```
 
-### ⚡ GPU Acceleration
+## RK 部署
 
-Built-in support for hardware acceleration across platforms:
+RK 设备部署需要同时确认应用和推理服务：
 
-- **macOS**: Apple Silicon (Metal) + CoreML
-- **Windows/Linux**: NVIDIA (CUDA), AMD/Intel (Vulkan)
+1. 确认 Ubuntu、内核、CPU 架构、NPU/PCIe 设备节点和音频设备。
+2. 按部署基线启动 ASR、diarization 和摘要服务。
+3. 安装 Tauri Debian 包或 AppImage。
+4. 在实际 HDMI/桌面会话中验证开始会议、停止会议、实时转写、分时摘要、最终纪要和录音播放。
+5. 验证服务开机自启、异常重启、日志和资源占用。
 
-Automatically enabled at build time - no configuration needed.
+不要用浏览器页面或 Windows 构建结果替代 RK 实机验收。验收清单和模型回退顺序见 [RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md](docs/RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md)。
 
-## System Architecture
+## 设备许可证
 
-Meetily is a single, self-contained application built with [Tauri](https://tauri.app/). It uses a Rust-based backend to handle all the core logic, and a Next.js frontend for the user interface.
+发布构建启动时会校验离线 Ed25519 许可证。许可证绑定目标设备的板卡序列号、CPU 序列号和系统标识；复制到另一台设备、篡改许可证或许可证过期时，应用会拒绝启动。
 
-For more details, see the [Architecture documentation](docs/architecture.md).
+私钥只保存在开发机，不进入 Git、安装包或客户设备。交付流程：
 
-## For Developers
+```bash
+# 目标设备获取指纹
+sudo frontend/src-tauri/scripts/device-fingerprint.sh
 
-If you want to contribute to Meetily or build it from source, you'll need to have Rust and Node.js installed. For detailed build instructions, please see the [Building from Source guide](docs/BUILDING.md).
+# 开发机签发许可证
+frontend/src-tauri/scripts/sign-license.sh \
+  --device-id 'sha256:目标设备完整指纹' \
+  --issued-at '2026-08-19T00:00:00Z' \
+  --expires-at '2027-08-19T00:00:00Z' \
+  --output ./license.json
 
-## Meetily Pro
+# 目标设备安装应用与许可证
+sudo frontend/src-tauri/scripts/prepare-device-release.sh \
+  ./会议助手.deb ./license.json
+```
 
-<p align="center">
-    <img src="docs/pv2.1.png" width="650" style="border-radius: 10px;" alt="Upcoming version" />
-</p>
+详细说明见 [设备许可证与交付](docs/device-license.md)。交付前删除源码、`.git`、`target/`、调试日志和所有私钥。
 
-**Meetily PRO** is a professional-grade solution with enhanced accuracy and advanced features for serious users and teams. Built on a different codebase with superior transcription models and enterprise-ready capabilities.
+## 数据与安全
 
-### Community Thank-You Offer
+- 首次启动由操作者设置管理员密码，仓库和发布包不包含默认管理员密码。
+- 会议结束后再设置会议访问密码，会议密码为 6 位数字。
+- 会议文件、录音、转写和摘要受本地访问控制保护。
+- 生产设备应使用专用低权限账号运行服务，关闭不必要的 SSH 密码登录，并限制 `/etc/meetingbox`、应用数据和模型目录权限。
+- 许可证能阻止普通复制和跨设备运行，但不能绝对阻止拥有 root 权限者逆向或修改二进制；设备系统加固和物理访问控制仍然必要。
 
-Meetily Community Edition will remain free and open source. PRO exists for users and teams who want a more advanced meeting workflow, including higher transcription accuracy, custom summary templates, advanced exports, auto-meeting detection, and self-hosted deployment options.
+## 验证与排障
 
-For the community that helped Meetily grow, we are making the upgrade easier: use coupon code **LAUNCH20** for **20% off Meetily PRO** until the next Meetily Community Edition release.
+前端类型检查：
 
-Speaker diarization is planned for mid-June, bringing automatic speaker separation to PRO meetings.
+```bash
+cd frontend
+pnpm exec tsc --noEmit --pretty false
+```
 
-### Key Advantages Over Community Edition:
+Rust 检查：
 
-- **Enhanced Accuracy**: Superior transcription models for professional-grade accuracy
-- **Custom Summary Templates**: Tailor summaries to your specific workflow and needs
-- **Advanced Export Options**: PDF, DOCX, and Markdown exports with formatting
-- **Auto-detect and Join Meetings**: Automatic meeting detection and joining
-- **Speaker Identification**: Distinguish between speakers automatically *(Coming Soon)*
-- **Chat with Meetings**: AI-powered meeting insights and queries *(Coming Soon)*
-- **Calendar Integration**: Seamless integration with your calendar *(Coming Soon)*
-- **Self-Hosted Deployment**: Deploy on your own infrastructure for teams
-- **GDPR Compliance Built-In**: Privacy by design architecture with complete audit trails
-- **Priority Support**: Dedicated support for PRO users
+```bash
+cargo check --locked
+```
 
-### Who is PRO for?
+设备状态和 NPU 监控由目标机上的 `rknn-smi` 提供：
 
-- **Professionals** who need the highest accuracy for critical meetings
-- **Teams and organizations** (2-100 users) requiring self-hosted deployment
-- **Power users** who need advanced export formats and custom workflows
-- **Compliance-focused organizations** requiring GDPR readiness
+```bash
+rknn-smi info
+rknn-smi info -w -d 0
+rknn-smi info -t work_mode -d 0
+```
 
-> **Note:** Meetily Community Edition remains **free & open source forever** with local transcription, AI summaries, and core features. PRO is a separate professional solution for users who need enhanced accuracy and advanced capabilities.
+`rknn-smi set -t work_mode -s 2 -d 0` 会切换到高性能模式并提高功耗与温度，只应在压力测试或明确的性能验收期间使用。
 
-For organizations needing 100+ users or managed compliance solutions, explore [Meetily Enterprise](https://meetily.ai/enterprise/).
+## 相关文档
 
-**Learn more about pricing and features:** [https://meetily.ai/pro/](https://meetily.ai/pro/)
+- [系统架构](docs/architecture.md)
+- [Linux 构建](docs/building_in_linux.md)
+- [通用构建说明](docs/BUILDING.md)
+- [RK 部署与验收基线](docs/RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md)
+- [设备许可证与交付](docs/device-license.md)
 
-## Contributing
+## 许可证
 
-We welcome contributions from the community! If you have any questions or suggestions, please open an issue or submit a pull request. Please follow the established project structure and guidelines. For more details, refer to the [CONTRIBUTING.md](CONTRIBUTING.md) file.
-
-Thanks for all the contributions. Our community is what makes this project possible.
-
-## License
-
-MIT License - Feel free to use this project for your own purposes.
-
-## Acknowledgments
-
-- We borrowed some code from [Whisper.cpp](https://github.com/ggerganov/whisper.cpp).
-- We borrowed some code from [Screenpipe](https://github.com/mediar-ai/screenpipe).
-- We borrowed some code from [transcribe-rs](https://crates.io/crates/transcribe-rs).
-- Thanks to **NVIDIA** for developing the **Parakeet** model.
-- Thanks to [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) for providing the **ONNX conversion** of the Parakeet model.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/chart?repos=Zackriya-Solutions/meetily&type=date&legend=top-left)](https://www.star-history.com/?repos=Zackriya-Solutions%2Fmeetily&type=date&legend=bottom-right)
+本仓库沿用项目原有许可证文件和第三方依赖许可证。发布和商业交付时，请同时遵守 Rust、Tauri、模型、字体和各推理服务依赖的许可证及其分发要求。
