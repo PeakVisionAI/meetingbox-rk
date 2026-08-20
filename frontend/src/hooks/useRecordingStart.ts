@@ -34,7 +34,7 @@ export function useRecordingStart(
   const startInFlightRef = useRef(false);
 
   const { clearTranscripts, setMeetingTitle } = useTranscripts();
-  const { setIsMeetingActive } = useSidebar();
+  const { setIsMeetingActive, setCurrentMeeting } = useSidebar();
   const { selectedDevices, transcriptModelConfig } = useConfig();
   const { setStatus } = useRecordingState();
 
@@ -137,6 +137,13 @@ export function useRecordingStart(
 
       const randomTitle = titleOverride?.trim() || generateMeetingTitle();
       setMeetingTitle(randomTitle);
+      // Keep the user-provided title available even if the native stop event
+      // arrives before its metadata listener is attached.
+      sessionStorage.setItem('active_recording_meeting_name', randomTitle);
+      // Saving happens after transcription has finished. Preserve the moment the
+      // meeting actually began so the file library does not use its save time.
+      sessionStorage.setItem('active_recording_started_at', new Date().toISOString());
+      setCurrentMeeting({ id: 'active-recording', title: randomTitle });
 
       // Set STARTING status before initiating backend recording
       setStatus(RecordingStatus.STARTING, 'Initializing recording...');
@@ -170,7 +177,7 @@ export function useRecordingStart(
     } finally {
       startInFlightRef.current = false;
     }
-  }, [isRecording, generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, ensureTranscriptionReady, selectedDevices, transcriptModelConfig.provider, setStatus]);
+  }, [isRecording, generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, setCurrentMeeting, ensureTranscriptionReady, selectedDevices, transcriptModelConfig.provider, setStatus]);
 
   useEffect(() => {
     const onTrayOrSidebarStart = () => {

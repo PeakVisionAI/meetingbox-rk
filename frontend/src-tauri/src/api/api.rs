@@ -15,6 +15,7 @@ use crate::{
     state::AppState,
     summary::CustomOpenAIConfig,
 };
+use chrono::{DateTime, Utc};
 
 // Hardcoded server URL
 const APP_SERVER_URL: &str = "http://localhost:5167";
@@ -943,6 +944,7 @@ pub async fn api_save_transcript<R: Runtime>(
     meeting_title: String,
     transcripts: Vec<serde_json::Value>,
     folder_path: Option<String>,
+    meeting_started_at: Option<String>,
     auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
@@ -981,6 +983,12 @@ pub async fn api_save_transcript<R: Runtime>(
     }
 
     let pool = state.db_manager.pool();
+    let meeting_started_at = meeting_started_at
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| DateTime::parse_from_rfc3339(&value)
+            .map(|time| time.with_timezone(&Utc))
+            .map_err(|_| "无效的会议开始时间".to_string()))
+        .transpose()?;
 
     // Now, call the repository with the correctly typed data.
     match TranscriptsRepository::save_transcript(
@@ -988,6 +996,7 @@ pub async fn api_save_transcript<R: Runtime>(
         &meeting_title,
         &transcripts_to_save,
         folder_path,
+        meeting_started_at,
     )
     .await
     {
@@ -1142,22 +1151,111 @@ pub async fn get_meeting_audio_path<R: Runtime>(
     let playback_dir = app_data_dir.join("playback");
     std::fs::create_dir_all(&playback_dir)
         .map_err(|e| format!("无法创建播放缓存目录: {}", e))?;
-    let extension = source.extension().and_then(|ext| ext.to_str()).unwrap_or("mp4");
-    // Audio-only MP4 recordings need an audio MIME type in RK WebKit. Keeping
-    // the bytes unchanged while exposing them as M4A makes Tauri serve audio/mp4.
-    let playback_extension = if extension.eq_ignore_ascii_case("mp4") {
-        "m4a"
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("mp4")
+        .to_ascii_lowercase();
+    // RK WebKit cannot reliably decode the audio-only MP4/M4A files produced by
+    // the recorder. Keep the source untouched and prepare a small MP3 cache.
+    let needs_transcode = matches!(
+        extension.as_str(),
+        "mp4" | "m4a" | "mkv" | "webm" | "wma" | "flac"
+    );
+    let playback_extension = if needs_transcode {
+        "mp3".to_string()
     } else {
-        extension
+        extension.clone()
     };
     let destination = playback_dir.join(format!("{}.{}", meeting_id, playback_extension));
-    let needs_copy = match (std::fs::metadata(&source), std::fs::metadata(&destination)) {
-        (Ok(src), Ok(dst)) => src.len() != dst.len() || src.modified().ok() != dst.modified().ok(),
+    let source_for_job = source.clone();
+    let destination_for_job = destination.clone();
+    let needs_prepare = match (
+        std::fs::metadata(&source),
+        std::fs::metadata(&destination),
+    ) {
+        (Ok(src), Ok(dst)) if dst.len() > 0 && needs_transcode => {
+            dst.modified().ok() < src.modified().ok()
+        }
+        (Ok(src), Ok(dst)) if dst.len() > 0 => {
+            src.len() != dst.len() || src.modified().ok() != dst.modified().ok()
+        }
         _ => true,
     };
-    if needs_copy {
-        std::fs::copy(&source, &destination)
-            .map_err(|e| format!("无法准备录音播放文件: {}", e))?;
+
+    if needs_prepare {
+        let job = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            // Keep the media extension last so FFmpeg can select the muxer even
+            // when writing an atomic temporary file.
+            let temporary = destination_for_job.with_file_name(format!(
+                ".{}.tmp.{}",
+                meeting_id, playback_extension
+            ));
+            let _ = std::fs::remove_file(&temporary);
+
+            if needs_transcode {
+                let ffmpeg_path = crate::audio::ffmpeg::find_ffmpeg_path()
+                    .ok_or_else(|| "找不到录音播放所需的 FFmpeg".to_string())?;
+                log_info!(
+                    "Transcoding meeting audio for WebKit playback: {} -> {}",
+                    source_for_job.display(),
+                    destination_for_job.display()
+                );
+                let output = std::process::Command::new(ffmpeg_path)
+                    .args([
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-threads",
+                        "1",
+                        "-i",
+                    ])
+                    .arg(&source_for_job)
+                    .args([
+                        "-vn",
+                        "-map",
+                        "0:a:0",
+                        "-c:a",
+                        "libmp3lame",
+                        "-b:a",
+                        "64k",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "48000",
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-f",
+                        "mp3",
+                    ])
+                    .arg(&temporary)
+                    .output()
+                    .map_err(|e| format!("无法启动录音转换: {}", e))?;
+                if !output.status.success() {
+                    let _ = std::fs::remove_file(&temporary);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(format!("录音转换失败: {}", stderr.trim()));
+                }
+            } else {
+                std::fs::copy(&source_for_job, &temporary)
+                    .map_err(|e| format!("无法准备录音播放文件: {}", e))?;
+            }
+
+            let size = std::fs::metadata(&temporary)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+            if size == 0 {
+                let _ = std::fs::remove_file(&temporary);
+                return Err("录音播放文件为空".to_string());
+            }
+
+            std::fs::rename(&temporary, &destination_for_job)
+                .map_err(|e| format!("无法完成录音播放文件准备: {}", e))?;
+            Ok(())
+        });
+        job.await
+            .map_err(|e| format!("录音播放准备任务失败: {}", e))??;
     }
 
     Ok(destination.to_string_lossy().to_string())
@@ -1170,7 +1268,9 @@ fn is_safe_meeting_id(meeting_id: &str) -> bool {
         && !meeting_id.contains("..")
 }
 
-/// Remove the playback cache copy after the details page unmounts.
+/// Remove an interrupted temporary playback file after the details page unmounts.
+/// Completed caches are intentionally retained so large recordings are not
+/// transcoded every time the user reopens a meeting.
 #[tauri::command]
 pub async fn release_meeting_audio_path<R: Runtime>(
     app: AppHandle<R>,
@@ -1190,14 +1290,14 @@ pub async fn release_meeting_audio_path<R: Runtime>(
         return Ok(());
     }
 
-    let prefix = format!("{}.", meeting_id);
+    let prefix = format!(".{}.", meeting_id);
     if let Ok(entries) = std::fs::read_dir(&playback_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if name.starts_with(&prefix) && path.is_file() {
+            if name.starts_with(&prefix) && name.contains(".tmp.") && path.is_file() {
                 let _ = std::fs::remove_file(path);
             }
         }

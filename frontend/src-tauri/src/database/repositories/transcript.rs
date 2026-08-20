@@ -1,5 +1,5 @@
 use crate::api::{TranscriptSearchResult, TranscriptSegment};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sqlx::{Connection, Error as SqlxError, SqlitePool};
 use tracing::{error, info};
 use uuid::Uuid;
@@ -15,6 +15,7 @@ impl TranscriptsRepository {
         meeting_title: &str,
         transcripts: &[TranscriptSegment],
         folder_path: Option<String>,
+        meeting_started_at: Option<DateTime<Utc>>,
     ) -> Result<String, SqlxError> {
         let meeting_id = format!("meeting-{}", Uuid::new_v4());
 
@@ -22,6 +23,7 @@ impl TranscriptsRepository {
         let mut transaction = conn.begin().await?;
 
         let now = Utc::now();
+        let created_at = meeting_started_at.unwrap_or(now);
 
         // 1. Create the new meeting
         let result = sqlx::query(
@@ -29,7 +31,7 @@ impl TranscriptsRepository {
         )
         .bind(&meeting_id)
         .bind(meeting_title)
-        .bind(now)
+        .bind(created_at)
         .bind(now)
         .bind(&folder_path)
         .execute(&mut *transaction)

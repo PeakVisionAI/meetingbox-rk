@@ -4,7 +4,6 @@ import { ModelConfig, ModelSettingsModal } from '@/components/ModelSettingsModal
 import {
   Dialog,
   DialogContent,
-  DialogTrigger,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { VisuallyHidden } from "@/components/ui/visually-hidden"
@@ -16,7 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Sparkles, Settings, Loader2, FileText, Check, Square } from 'lucide-react';
+import { Sparkles, Loader2, FileText, Check, Square } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
@@ -294,18 +293,7 @@ export function SummaryGeneratorButtonGroup({
 
       {languageSlot}
 
-      {/* Settings button */}
       <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
-        <DialogTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            title="Summary Settings"
-          >
-            <Settings />
-            <span className="hidden lg:inline">{uiText.aiModel}</span>
-          </Button>
-        </DialogTrigger>
         <DialogContent
           aria-describedby={undefined}
         >

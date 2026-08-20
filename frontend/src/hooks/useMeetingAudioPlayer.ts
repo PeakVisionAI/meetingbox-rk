@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
+import { readFile } from '@tauri-apps/plugin-fs';
+
+function audioMimeType(path: string) {
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (extension === 'wav') return 'audio/wav';
+  if (extension === 'ogg') return 'audio/ogg';
+  return 'audio/mpeg';
+}
 
 export function useMeetingAudioPlayer(meetingId?: string | null) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -28,8 +36,14 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
     setDuration(0);
   }, []);
 
-  const attachAudio = useCallback((path: string) => {
-    const url = convertFileSrc(path);
+  const attachAudio = useCallback(async (path: string) => {
+    const bytes = await readFile(path);
+    const data = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+    const url = URL.createObjectURL(new Blob([data], { type: audioMimeType(path) }));
+    objectUrlRef.current = url;
     const audio = new Audio(url);
     audio.preload = 'metadata';
     audio.addEventListener('loadedmetadata', () => {
@@ -57,6 +71,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
     });
     audioRef.current = audio;
     setAudioPath(path);
+    audio.load();
     return audio;
   }, []);
 
@@ -71,7 +86,12 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
       setIsLoading(true);
       setError(null);
       try {
-        const path = await invoke<string>('get_meeting_audio_path', { meetingId });
+        const path = await Promise.race([
+          invoke<string>('get_meeting_audio_path', { meetingId }),
+          new Promise<never>((_, reject) => {
+            window.setTimeout(() => reject(new Error('准备录音播放文件超时，请稍后重试')), 120_000);
+          }),
+        ]);
         if (!aliveRef.current) {
           void invoke('release_meeting_audio_path', { meetingId }).catch(() => {});
           throw new Error('录音播放已取消');
@@ -82,7 +102,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
         return attachAudio(path);
       } catch (loadError) {
         console.error('Failed to prepare meeting audio:', loadError);
-        setError('未找到本次会议的录音文件');
+        setError(loadError instanceof Error ? loadError.message : '无法准备本次会议的录音');
         throw loadError;
       } finally {
         setIsLoading(false);
@@ -113,6 +133,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
       await audio.play();
     } catch (playError) {
       console.error('Failed to play meeting audio segment:', playError);
+      setError(playError instanceof Error ? playError.message : '录音播放失败');
     }
   }, [ensureAudio]);
 
@@ -124,6 +145,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
       else audio.pause();
     } catch (playError) {
       console.error('Failed to toggle meeting audio:', playError);
+      setError(playError instanceof Error ? playError.message : '录音播放失败');
     }
   }, [ensureAudio]);
 
