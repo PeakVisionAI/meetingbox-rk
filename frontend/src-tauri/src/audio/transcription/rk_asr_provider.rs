@@ -3,10 +3,12 @@
 use super::provider::{TranscriptResult, TranscriptionError, TranscriptionProvider};
 use async_trait::async_trait;
 use log::{info, warn};
+use once_cell::sync::Lazy;
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const RK_ASR_ENDPOINT: &str = "http://127.0.0.1:8020";
@@ -20,6 +22,41 @@ static CURRENT_MEETING_ID: AtomicI64 = AtomicI64::new(0);
 static CURRENT_CHUNK_START_MS: AtomicI64 = AtomicI64::new(0);
 static MEETING_SEQ: AtomicI64 = AtomicI64::new(1);
 static SKIP_VAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HOTWORDS: Lazy<RwLock<Vec<(String, Option<String>)>>> =
+    Lazy::new(|| RwLock::new(Vec::new()));
+
+pub fn set_hotwords(hotwords: Vec<(String, Option<String>)>) {
+    if let Ok(mut configured) = HOTWORDS.write() {
+        *configured = hotwords;
+    }
+}
+
+fn configured_hotwords_json() -> String {
+    HOTWORDS
+        .read()
+        .ok()
+        .and_then(|configured| {
+            serde_json::to_string(
+                &configured
+                    .iter()
+                    .map(|(phrase, _)| phrase)
+                    .collect::<Vec<_>>(),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| "[]".to_string())
+}
+
+fn apply_hotword_corrections(mut text: String) -> String {
+    if let Ok(configured) = HOTWORDS.read() {
+        for (phrase, replacement) in configured.iter() {
+            if let Some(replacement) = replacement.as_deref().filter(|value| !value.is_empty()) {
+                text = text.replace(replacement, phrase);
+            }
+        }
+    }
+    text
+}
 
 #[derive(Debug, Deserialize)]
 struct HealthResponse {
@@ -218,6 +255,7 @@ impl TranscriptionProvider for RkAsrProvider {
             .part("audio", part)
             .text("meeting_id", meeting_id.to_string())
             .text("chunk_start_ms", chunk_start_ms.to_string())
+            .text("hotwords", configured_hotwords_json())
             .text(
                 "skip_vad",
                 if SKIP_VAD.load(Ordering::SeqCst) { "1" } else { "0" }.to_string(),
@@ -263,7 +301,7 @@ impl TranscriptionProvider for RkAsrProvider {
                 meeting_id, chunk_start_ms, diarization
             );
         }
-        let text = format_transcript_text(&payload.segments);
+        let text = apply_hotword_corrections(format_transcript_text(&payload.segments));
         info!(
             "RK ASR meeting_id={} chunk_start_ms={} elapsed_ms={} chars={}",
             meeting_id,

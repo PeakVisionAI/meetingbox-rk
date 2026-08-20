@@ -17,9 +17,11 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
-import { Download, FolderOpen, ArrowLeft } from 'lucide-react';
+import { Download, FolderOpen, ArrowLeft, Wrench } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { accessControlService } from '@/services/accessControlService';
+import { MeetingProductivityPanel } from '@/components/MeetingProductivityPanel';
+import { productivityService } from '@/services/productivityService';
 
 export default function PageContent({
   meeting,
@@ -62,6 +64,8 @@ export default function PageContent({
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [speakerLabels, setSpeakerLabels] = useState<Record<string, string>>({});
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
@@ -149,6 +153,14 @@ export default function PageContent({
     Analytics.trackPageView('meeting_details');
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    productivityService.listSpeakerLabels(meeting.id).then(labels => {
+      if (!cancelled) setSpeakerLabels(Object.fromEntries(labels.map(label => [label.speaker_key, label.display_name])));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [meeting.id]);
+
   // Auto-generate summary when flag is set
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +192,7 @@ export default function PageContent({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="hyos-details-page"
     >
-      <div className="hyos-details-head"><div><button className="hyos-back" onClick={() => router.push('/files')}><ArrowLeft size={16} />返回文件管理</button><h1>{meetingData.meetingTitle}</h1><p>{new Date(meeting.created_at).toLocaleString('zh-CN', { hour12: false })} · 本地会议成果</p></div><div className="hyos-download-actions"><button className="hyos-secondary" onClick={exportText}><Download size={15} />导出文字</button><button className="hyos-primary" onClick={meetingOperations.handleOpenMeetingFolder}><FolderOpen size={15} />打开录音位置</button></div></div>
+      <div className="hyos-details-head"><div><button className="hyos-back" onClick={() => router.push('/files')}><ArrowLeft size={16} />返回文件管理</button><h1>{meetingData.meetingTitle}</h1><p>{new Date(meeting.created_at).toLocaleString('zh-CN', { hour12: false })} · 本地会议成果</p></div><div className="hyos-download-actions"><button className="hyos-secondary" onClick={() => setToolsOpen(true)}><Wrench size={15} />会议工具</button><button className="hyos-secondary" onClick={exportText}><Download size={15} />导出文字</button><button className="hyos-primary" onClick={meetingOperations.handleOpenMeetingFolder}><FolderOpen size={15} />打开录音位置</button></div></div>
       <div className="hyos-details-body">
         <TranscriptPanel
           transcripts={meetingData.transcripts}
@@ -202,6 +214,7 @@ export default function PageContent({
           meetingId={meeting.id}
           meetingFolderPath={meeting.folder_path}
           onRefetchTranscripts={onRefetchTranscripts}
+          speakerLabels={speakerLabels}
         />
         <SummaryPanel
           meeting={meeting}
@@ -239,6 +252,7 @@ export default function PageContent({
           onOpenModelSettings={handleRegisterModalOpen}
         />
       </div>
+      <MeetingProductivityPanel meetingId={meeting.id} transcripts={meetingData.transcripts} open={toolsOpen} onClose={() => setToolsOpen(false)} onLabelsChange={setSpeakerLabels} onTranscriptsChanged={onRefetchTranscripts} />
     </motion.div>
   );
 }

@@ -37,6 +37,7 @@ function convertTranscriptsToSegments(transcripts: Transcript[]): TranscriptSegm
         endTime: t.audio_end_time,
         text: t.text,
         confidence: t.confidence,
+        speakerLabel: t.speaker,
     }));
 }
 
@@ -110,9 +111,10 @@ export function usePaginatedTranscripts({
                     // Deduplicate by id
                     const existingIds = new Set(prev.map(t => t.id));
                     const uniqueNew = newTranscripts.filter(t => !existingIds.has(t.id));
-                    // Sort by audio_start_time
+                    // Sort chronologically; legacy rows without audio timing go last.
                     return [...prev, ...uniqueNew].sort((a, b) =>
-                        (a.audio_start_time ?? 0) - (b.audio_start_time ?? 0)
+                        (a.audio_start_time == null ? Number.POSITIVE_INFINITY : a.audio_start_time) -
+                        (b.audio_start_time == null ? Number.POSITIVE_INFINITY : b.audio_start_time)
                     );
                 });
             } else {

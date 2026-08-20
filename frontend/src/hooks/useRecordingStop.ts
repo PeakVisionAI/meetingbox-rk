@@ -32,23 +32,54 @@ interface UseRecordingStopReturn {
   setIsStopping: (value: boolean) => void;
 }
 
+function stripProvisionalSpeakerPrefix(text: string): string {
+  return text.replace(/^(?:候选发言人|发言人待识别)[：:]\s*/, '').trim();
+}
+
 export function finalizedSpeakerSegmentsToTranscripts(
   calibration: SpeakerCalibrationResult,
   fallback: Transcript[],
 ): Transcript[] {
   if (!calibration.finalized || calibration.segments.length === 0) return fallback;
+
+  // The finalizer is a diarization pass, not a second transcription pass. Some
+  // RK service versions return one full-meeting segment even when the live ASR
+  // produced hundreds of chunks. Never replace those chunks with the merged
+  // response; only overlay the speaker label that covers each chunk in time.
+  if (fallback.length > 0) {
+    const calibrationSegments = calibration.segments;
+    return fallback.map((transcript) => {
+      const start = transcript.audio_start_time ?? transcript.chunk_start_time ?? 0;
+      const end = transcript.audio_end_time ?? start + (transcript.duration ?? 0);
+      const midpoint = start + Math.max(0, end - start) / 2;
+      const matchingSegment = calibrationSegments.find((segment) => {
+        const segmentStart = segment.start_ms / 1000;
+        const segmentEnd = segment.end_ms / 1000;
+        return midpoint >= segmentStart && midpoint <= segmentEnd;
+      }) ?? calibrationSegments.reduce((closest, segment) => {
+        const distance = Math.abs(midpoint - (segment.start_ms / 1000));
+        const closestDistance = Math.abs(midpoint - (closest.start_ms / 1000));
+        return distance < closestDistance ? segment : closest;
+      }, calibrationSegments[0]);
+      const speaker = matchingSegment.speaker?.trim();
+      return speaker
+        ? { ...transcript, text: stripProvisionalSpeakerPrefix(transcript.text), speaker }
+        : transcript;
+    });
+  }
+
+  // Imported/fallback-free meetings can still use finalized diarization output.
   return calibration.segments.map((segment, index) => {
-    const previous = fallback[index];
     const speaker = segment.speaker?.trim();
     const text = segment.text.trim();
     return {
-      id: previous?.id || `final-speaker-${index + 1}`,
-      text: speaker ? `${speaker}：${text}` : text,
-      timestamp: previous?.timestamp || new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      id: `final-speaker-${index + 1}`,
+      text,
+      speaker,
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
       sequence_id: index + 1,
       chunk_start_time: segment.start_ms / 1000,
       is_partial: false,
-      confidence: previous?.confidence,
       audio_start_time: segment.start_ms / 1000,
       audio_end_time: segment.end_ms / 1000,
       duration: Math.max(0, segment.end_ms - segment.start_ms) / 1000,

@@ -19,6 +19,7 @@ import { indexedDBService } from '@/services/indexedDBService';
 import { useRecordingStateSync } from '@/hooks/useRecordingStateSync';
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { formatMinuteRange, SUMMARY_INTERVAL_SECONDS, useMinuteSummaries } from '@/hooks/useMinuteSummaries';
+import { MeetingStatusFeedback } from '@/components/MeetingStatusFeedback';
 
 function formatClock(seconds: number | null) {
   const value = Math.max(0, Math.floor(seconds || 0));
@@ -147,6 +148,7 @@ export default function Home() {
         <section className="hyos-live-page">
           <div className="hyos-live-heading"><h1>{meetingTitle || '日常会议'}</h1></div>
           <div className="hyos-live-meta"><span className="hyos-live-record"><i />{recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS ? '正在处理' : '正在录音'}</span><span>会议时间 <b>{new Date().toLocaleString('zh-CN', { hour12: false }).slice(0, 16)}</b></span><span>当前时长 <b>{formatClock(recordingState.activeDuration)}</b></span><span>总结模板 <b>{selectedTemplateName}</b></span><span>内容分段 <b>{transcripts.length} 段</b></span><span className="hyos-live-local">转写中</span></div>
+          <MeetingStatusFeedback isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing || isStopping} summaryStatus={generatingMinute !== null ? 'processing' : 'idle'} />
           <div className="hyos-live-grid">
             <div className="hyos-transcript-pane"><div className="hyos-pane-title"><span>逐字稿</span><em>{transcripts.length} 段</em></div><div className="hyos-transcript-virtual"><VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} /></div></div>
             <aside className="hyos-summary-pane"><div className="hyos-pane-title"><span>会议分时摘要</span><em><i />每10分钟更新</em></div><div className="hyos-minute-summary-list">{minuteSummaries.length === 0 && generatingMinute === null ? <div className="hyos-summary-placeholder">首个10分钟结束后，这里会显示对应时段的内容摘要。</div> : minuteSummaries.map((summary) => <article className={`hyos-minute-summary ${summary.status || 'completed'}`} key={summary.minute_index}><div><time>{formatMinuteRange(summary.start_seconds, summary.end_seconds)}</time><span>{summary.status === 'empty' ? '无有效发言' : summary.status === 'error' ? '生成失败' : '已完成'}</span></div><p>{summary.summary || '本时段没有检测到有效发言。'}</p></article>)}{generatingMinute !== null && <div className="hyos-minute-generating"><i /><div><b>{formatMinuteRange(generatingMinute * SUMMARY_INTERVAL_SECONDS, (generatingMinute + 1) * SUMMARY_INTERVAL_SECONDS)}</b><span>正在生成本时段摘要</span></div></div>}</div></aside>
