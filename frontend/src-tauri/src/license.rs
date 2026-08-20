@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager, Runtime};
 const PRODUCT: &str = "meetingbox-rk";
 const LICENSE_FILE_NAME: &str = "license.json";
 const PUBLIC_KEY: [u8; 32] = [
-    0xa1, 0x58, 0x54, 0xc9, 0x31, 0x4b, 0x8f, 0x4b, 0x8e, 0x6b, 0x3d, 0xcd, 0xc8, 0x4b, 0xef, 0xab,
+    0xa1, 0x58, 0x54, 0xc9, 0x31, 0x4b, 0x8f, 0x4b, 0x8e, 0x6b, 0x3d, 0xcd, 0xc8, 0x4b, 0xea, 0xe1,
     0xf4, 0xe5, 0x22, 0xaf, 0x79, 0x50, 0x8a, 0x60, 0x29, 0x74, 0x65, 0xe2, 0x48, 0x59, 0x6f, 0xfb,
 ];
 
@@ -168,6 +168,9 @@ mod tests {
     const PAYLOAD: &str = "eyJzY2hlbWEiOjEsInByb2R1Y3QiOiJtZWV0aW5nYm94LXJrIiwiZGV2aWNlX2lkIjoiZGV2aWNlLWRlbW8iLCJpc3N1ZWRfYXQiOiIyMDI2LTA4LTE5VDAwOjAwOjAwWiIsImV4cGlyZXNfYXQiOiIyMDMwLTAxLTAxVDAwOjAwOjAwWiJ9";
     const SIGNATURE: &str =
         "6lsXeBv6/9YFKaFISIiK7LFCUADTxIRL4IqzGr+BrykW+vn0GvIgrJEmJEZfkEE/+DpYMmy0Wvp1zcGgCkcuCQ==";
+    const SCRIPT_PAYLOAD: &str = "eyJzY2hlbWEiOjEsInByb2R1Y3QiOiJtZWV0aW5nYm94LXJrIiwiZGV2aWNlX2lkIjoic2hhMjU2OmE0YzcyODYyYzBhYmVmYjE3ZWU5ZGIyMGFlZGQ0YWVhMGViZjU4OWQ3NDk4ZTVjMWZiOTQ4MTUzMzcwNjAxZTEiLCJpc3N1ZWRfYXQiOiIyMDI2LTA4LTIwVDA1OjAwOjAwWiIsImV4cGlyZXNfYXQiOiIyMDI3LTA4LTIwVDA1OjAwOjAwWiJ9";
+    const SCRIPT_SIGNATURE: &str =
+        "DvFYBVryCXrDbBnfyZ+DvytUsfhmXCcdFDceJRR6OEugiPyUKQZ5WACGtX0davWuAfoxVeZE0Y2Aoe7snx3OAA==";
 
     fn license() -> Vec<u8> {
         format!(r#"{{"payload":"{PAYLOAD}","signature":"{SIGNATURE}"}}"#).into_bytes()
@@ -179,6 +182,22 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         assert!(verify_license_bytes(&license(), "device-demo", now).is_ok());
+    }
+
+    #[test]
+    fn accepts_license_created_by_signing_script() {
+        let license = format!(
+            r#"{{"payload":"{SCRIPT_PAYLOAD}","signature":"{SCRIPT_SIGNATURE}"}}"#
+        );
+        let now = DateTime::parse_from_rfc3339("2026-08-20T05:10:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(verify_license_bytes(
+            license.as_bytes(),
+            "sha256:a4c72862c0abefb17ee9db20aedd4aea0ebf589d7498e5c1fb948153370601e1",
+            now,
+        )
+        .is_ok());
     }
 
     #[test]

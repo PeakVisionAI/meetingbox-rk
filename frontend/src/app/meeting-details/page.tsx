@@ -75,17 +75,7 @@ function MeetingAccessGuard({ meetingId, children }: { meetingId: string; childr
     }
   };
 
-  const useAdminPassword = async () => {
-    try {
-      await accessControlService.setMeetingPassword(meetingId, null);
-      finishSetup();
-      toast.info('本次会议将使用管理员密码保护');
-    } catch (error) {
-      toast.error('无法启用管理员密码保护', { description: String(error) });
-    }
-  };
-
-  if (setupOpen) return <div className="hyos-meeting-lock"><div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="setup-meeting-password-title"><h2 id="setup-meeting-password-title">设置会议密码</h2><p>会议已保存。请设置恰好 6 位数字密码，用于访问本次会议文件。</p><label>6 位会议密码<input type="password" inputMode="numeric" maxLength={6} value={setupPassword} onChange={(event) => setSetupPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} autoFocus /></label><label>确认会议密码<input type="password" inputMode="numeric" maxLength={6} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><div className="hyos-modal-actions"><button className="hyos-secondary" onClick={useAdminPassword}>使用管理员密码</button><button className="hyos-primary" onClick={saveMeetingPassword}>设置并查看文件</button></div></div></div>;
+  if (setupOpen) return <><>{children}</><div className="hyos-modal-backdrop" role="presentation"><div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="setup-meeting-password-title"><h2 id="setup-meeting-password-title">设置会议密码</h2><p>会议已保存。请在当前会议转写与纪要界面设置恰好 6 位数字密码。</p><label>6 位会议密码<input type="password" inputMode="numeric" maxLength={6} value={setupPassword} onChange={(event) => setSetupPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} autoFocus /></label><label>确认会议密码<input type="password" inputMode="numeric" maxLength={6} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><div className="hyos-modal-actions"><button className="hyos-primary" onClick={saveMeetingPassword}>设置并进入会议纪要</button></div></div></div></>;
 
   if (unlocked) return <>{children}</>;
   return <div className="hyos-meeting-lock"><div className="hyos-modal compact"><h2>{resetMode ? '重设会议密码' : '访问会议文件'}</h2><p>{resetMode ? '验证管理员密码后，为本次会议设置新的 6 位数字密码。' : '请输入本次会议密码；未单独设置时使用管理员密码。'}</p>{resetMode ? <><label>管理员密码<input type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /></label><label>新的会议密码<input type="password" inputMode="numeric" maxLength={6} value={newPassword} onChange={(event) => setNewPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><div className="hyos-form-tip">会议密码必须是 6 位数字；仅重设本次会议密码。</div></> : <label>会议密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && verify()} autoFocus /></label>}<div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => resetMode ? setResetMode(false) : router.push('/files')}>{resetMode ? '返回' : '取消'}</button>{resetMode ? <button className="hyos-primary" onClick={reset} disabled={!adminPassword || !newPassword}>确认重设</button> : <><button className="hyos-link-button" onClick={() => setResetMode(true)}>忘记会议密码？</button><button className="hyos-primary" onClick={verify} disabled={!password}>进入文件</button></>}</div></div></div>;

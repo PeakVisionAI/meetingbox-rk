@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, FolderOpen, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -11,9 +11,7 @@ import { uiText } from '@/lib/uiText';
 
 
 interface TranscriptButtonGroupProps {
-  transcriptCount: number;
-  onCopyTranscript: () => void;
-  onOpenMeetingFolder: () => Promise<void>;
+  onExportText: () => Promise<void>;
   meetingId?: string;
   meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
@@ -21,9 +19,7 @@ interface TranscriptButtonGroupProps {
 
 
 export function TranscriptButtonGroup({
-  transcriptCount,
-  onCopyTranscript,
-  onOpenMeetingFolder,
+  onExportText,
   meetingId,
   meetingFolderPath,
   onRefetchTranscripts,
@@ -45,28 +41,13 @@ export function TranscriptButtonGroup({
           variant="outline"
           size="sm"
           onClick={() => {
-            Analytics.trackButtonClick('copy_transcript', 'meeting_details');
-            onCopyTranscript();
+            Analytics.trackButtonClick('export_transcript', 'meeting_details');
+            void onExportText();
           }}
-          disabled={transcriptCount === 0}
-          title={transcriptCount === 0 ? uiText.noTranscript : uiText.copyTranscript}
+          title="导出文字"
         >
-          <Copy />
-          <span className="hidden lg:inline">{uiText.copy}</span>
-        </Button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          className="xl:px-4"
-          onClick={() => {
-            Analytics.trackButtonClick('open_recording_folder', 'meeting_details');
-            onOpenMeetingFolder();
-          }}
-          title={uiText.openRecordingFolder}
-        >
-          <FolderOpen className="xl:mr-2" size={18} />
-          <span className="hidden lg:inline">{uiText.recording}</span>
+          <Download />
+          <span className="hidden lg:inline">导出文字</span>
         </Button>
 
         {betaFeatures.importAndRetranscribe && meetingId && meetingFolderPath && (

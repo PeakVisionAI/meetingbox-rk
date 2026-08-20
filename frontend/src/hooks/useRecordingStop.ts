@@ -320,10 +320,13 @@ export function useRecordingStop(
         // Get folder_path and meeting_name from recording-stopped event
         const folderPath = sessionStorage.getItem('last_recording_folder_path');
         const savedMeetingName = sessionStorage.getItem('last_recording_meeting_name');
+        const activeMeetingName = sessionStorage.getItem('active_recording_meeting_name');
+        const activeMeetingStartedAt = sessionStorage.getItem('active_recording_started_at');
+        const effectiveMeetingName = activeMeetingName || savedMeetingName || meetingTitle || 'New Meeting';
 
         console.log('💾 Saving COMPLETE transcripts to database...', {
           transcript_count: freshTranscripts.length,
-          meeting_name: savedMeetingName || meetingTitle,
+          meeting_name: effectiveMeetingName,
           folder_path: folderPath,
           sample_text: freshTranscripts.length > 0 ? freshTranscripts[0].text.substring(0, 50) + '...' : 'none',
           last_transcript: freshTranscripts.length > 0 ? freshTranscripts[freshTranscripts.length - 1].text.substring(0, 30) + '...' : 'none',
@@ -331,9 +334,10 @@ export function useRecordingStop(
 
         try {
           const responseData = await storageService.saveMeeting(
-            savedMeetingName || meetingTitle || 'New Meeting',  // PREFER savedMeetingName (backend source)
+            effectiveMeetingName,
             freshTranscripts,
-            folderPath
+            folderPath,
+            activeMeetingStartedAt,
           );
 
           const meetingId = responseData.meeting_id;
@@ -341,6 +345,31 @@ export function useRecordingStop(
             console.error('No meeting_id in response:', responseData);
             throw new Error('No meeting ID received from save operation');
           }
+
+          console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
+          await accessControlService.setMeetingPassword(meetingId, null);
+          const summaryTemplateId = sessionStorage.getItem('pending_summary_template_id') || 'standard_meeting';
+
+          // The meeting is durable at this point. Show password setup on top of
+          // its transcript/summary page immediately; non-critical post-processing
+          // below must not hold the user on the recording screen.
+          await markMeetingAsSaved();
+          setCurrentMeeting({ id: meetingId, title: effectiveMeetingName });
+          setStatus(RecordingStatus.COMPLETED);
+
+          sessionStorage.removeItem('last_recording_folder_path');
+          sessionStorage.removeItem('last_recording_meeting_name');
+          sessionStorage.removeItem('active_recording_meeting_name');
+          sessionStorage.removeItem('active_recording_started_at');
+          sessionStorage.removeItem('indexeddb_current_meeting_id');
+          sessionStorage.removeItem('pending_minute_summaries');
+          sessionStorage.removeItem('pending_summary_template_id');
+
+          const template = encodeURIComponent(summaryTemplateId);
+          router.push(`/meeting-details?id=${meetingId}&source=recording&setPassword=1&template=${template}`);
+          clearTranscripts();
+          Analytics.trackPageView('meeting_details');
+          setStatus(RecordingStatus.IDLE);
 
           let shouldDetectSummaryLanguage = false;
           try {
@@ -366,9 +395,6 @@ export function useRecordingStop(
             }
           }
 
-          console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
-          await accessControlService.setMeetingPassword(meetingId, null);
-          const summaryTemplateId = sessionStorage.getItem('pending_summary_template_id') || 'standard_meeting';
           try {
             const minuteSummaries = await finalizeMinuteSummaries(freshTranscripts, summaryTemplateId);
             await minuteSummaryService.save(
@@ -381,17 +407,6 @@ export function useRecordingStop(
           }
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
-
-          // Mark meeting as saved in IndexedDB (for recovery system)
-          await markMeetingAsSaved();
-
-          // Clean up session storage
-          sessionStorage.removeItem('last_recording_folder_path');
-          sessionStorage.removeItem('last_recording_meeting_name');
-          // Clean up IndexedDB meeting ID (redundant with markMeetingAsSaved cleanup, but ensures cleanup)
-          sessionStorage.removeItem('indexeddb_current_meeting_id');
-          sessionStorage.removeItem('pending_minute_summaries');
-          sessionStorage.removeItem('pending_summary_template_id');
 
           // Refetch meetings and set current meeting
           await refetchMeetings();
@@ -407,35 +422,15 @@ export function useRecordingStop(
             }
           } catch (error) {
             console.warn('Could not fetch meeting details, using ID only:', error);
-            setCurrentMeeting({ id: meetingId, title: savedMeetingName || meetingTitle || 'New Meeting' });
+            setCurrentMeeting({ id: meetingId, title: effectiveMeetingName });
           }
 
-          // Mark as completed
-          setStatus(RecordingStatus.COMPLETED);
-
-          // Show success toast with navigation option
+          // Confirm successful persistence without offering a route that could
+          // bypass the mandatory password setup screen.
           toast.success('Recording saved successfully!', {
             description: `${freshTranscripts.length} transcript segments saved.`,
-            action: {
-              label: 'View Meeting',
-              onClick: () => {
-                router.push(`/meeting-details?id=${meetingId}`);
-                Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
-              }
-            },
-            duration: 10000,
+            duration: 5000,
           });
-
-          // Auto-navigate after a short delay with source parameter
-          setTimeout(() => {
-            const template = encodeURIComponent(summaryTemplateId);
-            router.push(`/meeting-details?id=${meetingId}&source=recording&askSummary=1&setPassword=1&template=${template}`);
-            clearTranscripts()
-            Analytics.trackPageView('meeting_details');
-
-            // Reset to IDLE after navigation
-            setStatus(RecordingStatus.IDLE);
-          }, 2000);
           // Track meeting completion analytics
           try {
             // Calculate meeting duration from transcript timestamps

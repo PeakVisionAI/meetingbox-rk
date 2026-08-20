@@ -188,31 +188,35 @@ fn append_meeting_filters(
     date_from: &str,
     date_to: &str,
 ) {
+    let query = query.to_owned();
+    let speaker = speaker.to_owned();
+    let date_from = date_from.to_owned();
+    let date_to = date_to.to_owned();
     builder
         .push("(")
-        .push_bind(query)
+        .push_bind(query.clone())
         .push(" = '' OR lower(m.title) LIKE '%' || ")
-        .push_bind(query)
+        .push_bind(query.clone())
         .push(" || '%' OR lower(COALESCE(t.transcript, '')) LIKE '%' || ")
-        .push_bind(query)
+        .push_bind(query.clone())
         .push(" || '%' OR lower(COALESCE(t.speaker, '')) LIKE '%' || ")
-        .push_bind(query)
+        .push_bind(query.clone())
         .push(" || '%' OR lower(COALESCE(l.display_name, '')) LIKE '%' || ")
         .push_bind(query)
         .push(" || '%') AND (")
-        .push_bind(speaker)
+        .push_bind(speaker.clone())
         .push(" = '' OR lower(COALESCE(t.speaker, '')) LIKE '%' || ")
-        .push_bind(speaker)
+        .push_bind(speaker.clone())
         .push(" || '%' OR lower(COALESCE(t.transcript, '')) LIKE '%' || ")
-        .push_bind(speaker)
+        .push_bind(speaker.clone())
         .push(" || '%' OR lower(COALESCE(l.display_name, '')) LIKE '%' || ")
         .push_bind(speaker)
         .push(" || '%') AND (")
-        .push_bind(date_from)
+        .push_bind(date_from.clone())
         .push(" = '' OR substr(m.created_at, 1, 10) >= ")
         .push_bind(date_from)
         .push(") AND (")
-        .push_bind(date_to)
+        .push_bind(date_to.clone())
         .push(" = '' OR substr(m.created_at, 1, 10) <= ")
         .push_bind(date_to)
         .push(")");
