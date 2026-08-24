@@ -65,8 +65,8 @@ export function HotwordSettings() {
         <div><h2>热词与领域词表</h2><p>目标词会发送给本机 ASR；填写常见误识别写法后，还会在本地自动纠正。</p></div>
       </div>
       <div className="hyos-hotword-form">
-        <label>目标词<input value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder="例如：峰瞰密会智盒" /></label>
-        <label>常见误识别写法<input value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="可选，例如：峰看密会智盒" /></label>
+        <label>目标词<input value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder="例如：AI智能会议助手" /></label>
+        <label>常见误识别写法<input value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="可选，例如：离线会议盒" /></label>
         <button className="hyos-primary" onClick={add} disabled={saving || !phrase.trim()}><Plus size={15} />添加</button>
       </div>
       <div className="hyos-form-tip">词表在开始会议时加载；修改后从下一场会议开始生效。</div>

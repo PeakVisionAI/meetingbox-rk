@@ -447,10 +447,11 @@ impl SummaryService {
             info!("📝 Summary language preference: {}", code);
         }
 
-        let detected_summary_language =
-            Self::read_detected_summary_language(&pool, &meeting_id)
-                .await
-                .or_else(|| Self::detect_summary_language_from_text(&text));
+        // Re-detect from the complete transcript before falling back to metadata.
+        // Older releases could cache "en" after evaluating fragmented Chinese ASR
+        // segments, and that stale value must not control later regenerations.
+        let detected_summary_language = Self::detect_summary_language_from_text(&text)
+            .or(Self::read_detected_summary_language(&pool, &meeting_id).await);
 
         if let Some(code) = &detected_summary_language {
             info!("📝 Detected transcript summary language: {}", code);

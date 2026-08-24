@@ -12,6 +12,7 @@ export interface RecordingState {
   is_recording: boolean;
   is_paused: boolean;
   is_active: boolean;
+  speech_active: boolean;
   recording_duration: number | null;
   active_duration: number | null;
 }

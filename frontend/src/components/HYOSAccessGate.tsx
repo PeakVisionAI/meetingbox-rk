@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { accessControlService } from '@/services/accessControlService';
 
@@ -59,5 +58,30 @@ export function HYOSAccessGate({ children }: { children: React.ReactNode }) {
   if (loading) return <div className="hyos-access-loading">正在启动本地安全服务…</div>;
   if (authenticated) return <>{children}</>;
 
-  return <main className="hyos-login-screen"><header className="hyos-login-brand"><span>智能会议助手</span><i>-</i><b>HYOS</b></header><div className="hyos-login-layout"><section className="hyos-device-visual"><div className="hyos-device-shell"><span /><span /><span /><i /></div><h1>会议资料<br />留在本机</h1><p>录音、转写与纪要由设备本地处理。</p></section><section className="hyos-login-card"><div className="hyos-login-mark"><ShieldCheck size={28} /></div><h1>智能会议助手</h1><h2>{initialized ? '管理员登录' : '首次初始化'}</h2><p>{initialized ? '请输入唯一管理员账号与密码。' : '首次使用请设置管理员密码。设备不会预置或显示默认口令。'}</p>{initialized ? <><label>管理员账号<input value="admin" readOnly /></label><label>管理员密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && login()} /></label><button className="hyos-primary hyos-login-submit" onClick={login} disabled={!password}>进入系统 <b>→</b></button></> : <><label>管理员密码<input type="password" inputMode="numeric" maxLength={6} value={newPassword} onChange={(event) => setNewPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><label>确认管理员密码<input type="password" inputMode="numeric" maxLength={6} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><div className="hyos-form-tip">管理员密码必须是 6 位数字。</div><div className="hyos-warning"><b>管理员密码不可找回</b><span>遗忘后需刷写设备，已有数据可能丢失。</span></div><button className="hyos-primary hyos-login-submit" onClick={initialize} disabled={!newPassword || !confirmPassword}>完成初始化并进入系统</button></>}<div className="hyos-login-status"><i />系统服务正常</div></section></div></main>;
+  return (
+    <main className="hyos-login-screen">
+      <img className="hyos-login-art" src="/register-page.svg" alt="AI智能会议助手" />
+      <section className="hyos-login-card" aria-labelledby="hyos-login-title">
+        <h1 id="hyos-login-title">AI智能会议助手</h1>
+        <h2>{initialized ? '管理员登录' : '首次初始化'}</h2>
+        <p>{initialized ? '请输入唯一管理员账号与密码。' : '首次使用请设置管理员密码。设备不会预置或显示默认口令。'}</p>
+        {initialized ? (
+          <>
+            <label>管理员账号<input value="admin" readOnly aria-label="管理员账号" /></label>
+            <label>管理员密码<input type="password" value={password} aria-label="管理员密码" onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && login()} autoFocus /></label>
+            <button className="hyos-primary hyos-login-submit" onClick={login} disabled={!password}>进入系统 <b aria-hidden="true">→</b></button>
+          </>
+        ) : (
+          <>
+            <label>设置管理员密码<input type="password" inputMode="numeric" maxLength={6} value={newPassword} aria-label="设置管理员密码" onChange={(event) => setNewPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} autoFocus /></label>
+            <label>确认管理员密码<input type="password" inputMode="numeric" maxLength={6} value={confirmPassword} aria-label="确认管理员密码" onChange={(event) => setConfirmPassword(event.target.value.replace(/\D/g, '').slice(0, 6))} onKeyDown={(event) => event.key === 'Enter' && initialize()} /></label>
+            <div className="hyos-form-tip">管理员密码必须是 6 位数字。</div>
+            <div className="hyos-warning"><b>管理员密码不可找回</b><span>遗忘后需刷写设备，已有数据可能丢失。</span></div>
+            <button className="hyos-primary hyos-login-submit" onClick={initialize} disabled={!newPassword || !confirmPassword}>完成初始化并进入系统</button>
+          </>
+        )}
+        <div className="hyos-login-status"><i />系统服务正常</div>
+      </section>
+    </main>
+  );
 }

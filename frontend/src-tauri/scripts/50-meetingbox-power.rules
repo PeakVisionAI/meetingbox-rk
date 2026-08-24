@@ -1,0 +1,17 @@
+// Allow the dedicated application user to use the three power actions exposed
+// by the MeetingBox UI. The installer replaces the user placeholder below.
+polkit.addRule(function (action, subject) {
+  var appUser = "@MEETINGBOX_POWER_USER@";
+  var allowed = [
+    "org.freedesktop.login1.reboot",
+    "org.freedesktop.login1.reboot-multiple-sessions",
+    "org.freedesktop.login1.suspend",
+    "org.freedesktop.login1.suspend-multiple-sessions",
+    "org.freedesktop.login1.power-off",
+    "org.freedesktop.login1.power-off-multiple-sessions"
+  ];
+
+  if (allowed.indexOf(action.id) !== -1 && subject.user == appUser) {
+    return polkit.Result.YES;
+  }
+});

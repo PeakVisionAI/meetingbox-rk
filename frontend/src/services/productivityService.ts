@@ -7,6 +7,7 @@ export interface MeetingSearchResult {
   updated_at: string;
   folder_path?: string | null;
   transcript_count: number;
+  duration_seconds?: number | null;
 }
 
 export interface PaginatedMeetingSearchResponse {

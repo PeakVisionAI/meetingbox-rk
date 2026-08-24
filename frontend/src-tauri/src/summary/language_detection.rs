@@ -7,6 +7,7 @@ use super::processor::language_name_from_code;
 
 const MIN_MEANINGFUL_CHARS: usize = 20;
 const MIN_RELIABLE_CONFIDENCE: f64 = 0.25;
+const DOMINANT_SCRIPT_RATIO: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +26,16 @@ pub struct SummaryLanguageDetection {
 }
 
 pub(crate) fn detect_summary_language(transcript_texts: &[String]) -> SummaryLanguageDetection {
+    // ASR emits many short segments. Detecting each one independently can discard
+    // most Chinese speech while retaining a few longer English recognition errors.
+    // Use the aggregate script balance first when Chinese is unambiguous.
+    if transcript_is_dominantly_chinese(transcript_texts) {
+        return SummaryLanguageDetection {
+            language: Some("zh".to_string()),
+            reason: SummaryLanguageDetectionReason::Detected,
+        };
+    }
+
     let mut weights: HashMap<&'static str, usize> = HashMap::new();
     let mut saw_meaningful_text = false;
     let mut saw_low_confidence = false;
@@ -78,9 +89,40 @@ pub(crate) fn detect_summary_language(transcript_texts: &[String]) -> SummaryLan
     summarize_weighted_detection(weights)
 }
 
-fn summarize_weighted_detection(
-    weights: HashMap<&'static str, usize>,
-) -> SummaryLanguageDetection {
+fn transcript_is_dominantly_chinese(transcript_texts: &[String]) -> bool {
+    let mut han = 0usize;
+    let mut latin = 0usize;
+    let mut kana = 0usize;
+
+    for character in transcript_texts.iter().flat_map(|text| text.chars()) {
+        let code = character as u32;
+        if is_han(code) {
+            han += 1;
+        } else if character.is_ascii_alphabetic() {
+            latin += 1;
+        } else if matches!(code, 0x3040..=0x30ff | 0x31f0..=0x31ff) {
+            kana += 1;
+        }
+    }
+
+    han >= MIN_MEANINGFUL_CHARS
+        && han
+            >= latin
+                .saturating_add(kana)
+                .saturating_mul(DOMINANT_SCRIPT_RATIO)
+}
+
+fn is_han(code: u32) -> bool {
+    matches!(
+        code,
+        0x3400..=0x4dbf
+            | 0x4e00..=0x9fff
+            | 0xf900..=0xfaff
+            | 0x20000..=0x2fa1f
+    )
+}
+
+fn summarize_weighted_detection(weights: HashMap<&'static str, usize>) -> SummaryLanguageDetection {
     let mut best: Option<(&'static str, usize)> = None;
     let mut tied = false;
 
@@ -167,7 +209,10 @@ mod tests {
             "The team reviewed the roadmap, discussed release blockers, and agreed on the next engineering milestones.",
         ]);
 
-        assert_eq!(detect_summary_language(&texts).language, Some("en".to_string()));
+        assert_eq!(
+            detect_summary_language(&texts).language,
+            Some("en".to_string())
+        );
     }
 
     #[test]
@@ -176,7 +221,40 @@ mod tests {
             "团队讨论了产品路线图、发布风险以及下一阶段的工程计划，并确认了后续负责人。",
         ]);
 
-        assert_eq!(detect_summary_language(&texts).language, Some("zh".to_string()));
+        assert_eq!(
+            detect_summary_language(&texts).language,
+            Some("zh".to_string())
+        );
+    }
+
+    #[test]
+    fn transcript_summary_language_detects_fragmented_chinese_with_english_noise() {
+        let mut texts = strings(&[
+            "今天讨论产品计划",
+            "先看会议录音功能",
+            "接下来确认负责人",
+            "最后安排测试时间",
+            "需要修复播放问题",
+            "并完成设备端部署",
+        ]);
+        texts.extend(strings(&["prefi30", "So", "Thank"]));
+
+        assert_eq!(
+            detect_summary_language(&texts).language,
+            Some("zh".to_string())
+        );
+    }
+
+    #[test]
+    fn transcript_summary_language_does_not_treat_japanese_as_chinese() {
+        let texts = strings(&[
+            "チームは製品計画と次回のリリースについて議論し、担当者とテスト日程を確認しました。",
+        ]);
+
+        assert_ne!(
+            detect_summary_language(&texts).language,
+            Some("zh".to_string())
+        );
     }
 
     #[test]
@@ -187,7 +265,10 @@ mod tests {
             "The group also assigned owners for documentation, QA verification, support readiness, and deployment communications.",
         ]);
 
-        assert_eq!(detect_summary_language(&texts).language, Some("en".to_string()));
+        assert_eq!(
+            detect_summary_language(&texts).language,
+            Some("en".to_string())
+        );
     }
 
     #[test]

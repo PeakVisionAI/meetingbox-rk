@@ -6,6 +6,7 @@ package_path=$1
 license_path=$2
 
 "$(dirname "$0")/install-license.sh" "$license_path"
+"$(dirname "$0")/install-power-policy.sh"
 if [[ "$package_path" == *.deb ]]; then
   apt-get install -y "$package_path"
 else
