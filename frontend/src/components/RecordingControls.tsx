@@ -3,7 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { appDataDir } from '@tauri-apps/api/path';
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { Play, Square, Mic, AlertCircle, X } from 'lucide-react';
+import { Play, Square, Pause, Mic, AlertCircle, X } from 'lucide-react';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
 import { listen } from '@tauri-apps/api/event';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import Analytics from '@/lib/analytics';
 import { uiText } from '@/lib/uiText';
 import type { SpeakerCalibrationResult, StopRecordingResult } from '@/services/recordingService';
+import { recordingService } from '@/services/recordingService';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -28,6 +29,9 @@ interface RecordingControlsProps {
     systemDevice: string | null;
   };
   meetingName?: string;
+  recordingDuration?: string;
+  isPaused?: boolean;
+  hasSpeech?: boolean;
 }
 
 export const RecordingControls: React.FC<RecordingControlsProps> = ({
@@ -43,6 +47,9 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   isParentProcessing,
   selectedDevices,
   meetingName,
+  recordingDuration = '00:00',
+  isPaused = false,
+  hasSpeech = false,
 }) => {
   const [showPlayback, setShowPlayback] = useState(false);
   const [recordingPath, setRecordingPath] = useState<string | null>(null);
@@ -53,8 +60,21 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const MIN_RECORDING_DURATION = 2000; // 2 seconds minimum recording time
   const [transcriptionErrors, setTranscriptionErrors] = useState(0);
   const [isValidatingModel, setIsValidatingModel] = useState(false);
-  const [speechDetected, setSpeechDetected] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
+  const isWaveformActive = isRecording && !isPaused && hasSpeech;
+
+  const togglePauseRecording = useCallback(async () => {
+    if (!isRecording || isStopping || isProcessing || isParentProcessing) return;
+    try {
+      if (isPaused) {
+        await recordingService.resumeRecording();
+      } else {
+        await recordingService.pauseRecording();
+      }
+    } catch (error) {
+      onTranscriptionError?.(isPaused ? '无法继续录音，请重试' : '无法暂停录音，请重试');
+    }
+  }, [isPaused, isParentProcessing, isProcessing, isRecording, isStopping, onTranscriptionError]);
 
   const currentTime = 0;
   const duration = 0;
@@ -89,8 +109,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
     setShowPlayback(false);
     setTranscript(''); // Clear any previous transcript
-    setSpeechDetected(false); // Reset speech detection on new recording
-
     try {
       // Call the validation callback which will:
       // 1. Check if model is ready
@@ -275,16 +293,9 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         // Pause/Resume events are now handled by RecordingStateContext
         // No need for duplicate listeners here
 
-        // Speech detected listener - for UX feedback when VAD detects speech
-        const speechDetectedUnsubscribe = await listen('speech-detected', (event) => {
-          console.log('speech-detected event received:', event);
-          setSpeechDetected(true);
-        });
-
         unsubscribes = [
           transcriptErrorUnsubscribe,
-          transcriptionErrorUnsubscribe,
-          speechDetectedUnsubscribe
+          transcriptionErrorUnsubscribe
         ];
         console.log('Recording event listeners set up successfully');
       } catch (error) {
@@ -303,6 +314,14 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       });
     };
   }, [onRecordingStop, onTranscriptionError]);
+
+  useEffect(() => {
+    const handleHeaderStop = () => {
+      void handleStopRecording();
+    };
+    window.addEventListener('end-meeting-from-header', handleHeaderStop);
+    return () => window.removeEventListener('end-meeting-from-header', handleHeaderStop);
+  }, [handleStopRecording]);
 
   return (
     <TooltipProvider>
@@ -383,14 +402,14 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                         <TooltipTrigger asChild>
                           <button
                             onClick={() => {
-                              Analytics.trackButtonClick('stop_recording', 'recording_controls');
-                              handleStopRecording();
+                              Analytics.trackButtonClick('pause_recording', 'recording_controls');
+                              void togglePauseRecording();
                             }}
                             disabled={isStopping}
-                            className={`w-10 h-10 flex items-center justify-center ${isStopping ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
+                            className={`w-10 h-10 flex items-center justify-center ${isStopping ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
                               } rounded-full text-white transition-colors relative`}
                           >
-                            <Square size={16} />
+                            {isPaused ? <Play size={17} /> : <Pause size={17} />}
                             {isStopping && (
                               <div className="absolute -top-8 text-gray-600 font-medium text-xs">
                                 Stopping...
@@ -399,19 +418,23 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                           </button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{uiText.stopRecording}</p>
+                        <p>{isPaused ? uiText.resumeRecording : uiText.pauseRecording}</p>
                         </TooltipContent>
                       </Tooltip>
                     </>
                   )}
 
-                  <div className="flex items-center space-x-1 mx-4">
+                  <div
+                    className={`hyos-control-waveform flex items-center space-x-1 mx-4${isWaveformActive ? ' is-active' : ''}`}
+                    aria-hidden="true"
+                  >
                     {barHeights.map((height, index) => (
                       <div
                         key={index}
                         className="w-1 rounded-full transition-all duration-200 bg-red-500"
                         style={{
-                          height: isRecording ? height : '4px',
+                          height: isWaveformActive ? height : '4px',
+                          animationDelay: `${index * -70}ms`,
                           opacity: 1,
                         }}
                       />

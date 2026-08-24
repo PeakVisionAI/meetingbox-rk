@@ -59,6 +59,7 @@ pub struct MeetingSearchResult {
     pub updated_at: String,
     pub folder_path: Option<String>,
     pub transcript_count: i64,
+    pub duration_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +71,18 @@ pub struct PaginatedMeetingSearchResponse {
 
 fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn metadata_duration_seconds(folder_path: Option<&str>) -> Option<f64> {
+    let folder_path = folder_path?.trim();
+    if folder_path.is_empty() {
+        return None;
+    }
+    let metadata_path = Path::new(folder_path).join("metadata.json");
+    let raw = fs::read_to_string(metadata_path).ok()?;
+    let metadata = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    let duration = metadata.get("duration_seconds")?.as_f64()?;
+    (duration.is_finite() && duration > 0.0).then_some(duration)
 }
 
 fn non_empty(value: String, field: &str) -> Result<String, String> {
@@ -147,7 +160,7 @@ pub async fn api_search_meetings(
         .map_err(|error| error.to_string())?;
 
     let mut rows_builder = QueryBuilder::<Sqlite>::new(
-        "SELECT m.id, m.title, m.created_at, m.updated_at, m.folder_path, COUNT(t.id) AS transcript_count FROM meetings m LEFT JOIN transcripts t ON t.meeting_id = m.id LEFT JOIN meeting_speaker_labels l ON l.meeting_id = m.id AND l.speaker_key = t.speaker WHERE ",
+        "SELECT m.id, m.title, m.created_at, m.updated_at, m.folder_path, COUNT(t.id) AS transcript_count, MAX(COALESCE(t.audio_end_time, CASE WHEN t.audio_start_time IS NOT NULL AND t.duration IS NOT NULL THEN t.audio_start_time + t.duration ELSE NULL END)) AS duration_seconds FROM meetings m LEFT JOIN transcripts t ON t.meeting_id = m.id LEFT JOIN meeting_speaker_labels l ON l.meeting_id = m.id AND l.speaker_key = t.speaker WHERE ",
     );
     append_meeting_filters(&mut rows_builder, &query, &speaker, &date_from, &date_to);
     rows_builder
@@ -163,15 +176,23 @@ pub async fn api_search_meetings(
         .map_err(|error| error.to_string())?;
     let meetings = rows
         .into_iter()
-        .map(|row| MeetingSearchResult {
-            id: row.try_get("id").unwrap_or_default(),
-            title: row.try_get("title").unwrap_or_default(),
-            created_at: row.try_get("created_at").unwrap_or_default(),
-            updated_at: row.try_get("updated_at").unwrap_or_default(),
-            folder_path: row
+        .map(|row| {
+            let folder_path = row
                 .try_get::<Option<String>, _>("folder_path")
-                .unwrap_or(None),
-            transcript_count: row.try_get("transcript_count").unwrap_or_default(),
+                .unwrap_or(None);
+            let transcript_duration = row
+                .try_get::<Option<f64>, _>("duration_seconds")
+                .unwrap_or(None);
+            MeetingSearchResult {
+                id: row.try_get("id").unwrap_or_default(),
+                title: row.try_get("title").unwrap_or_default(),
+                created_at: row.try_get("created_at").unwrap_or_default(),
+                updated_at: row.try_get("updated_at").unwrap_or_default(),
+                folder_path: folder_path.clone(),
+                transcript_count: row.try_get("transcript_count").unwrap_or_default(),
+                duration_seconds: metadata_duration_seconds(folder_path.as_deref())
+                    .or(transcript_duration),
+            }
         })
         .collect::<Vec<_>>();
     Ok(PaginatedMeetingSearchResponse {

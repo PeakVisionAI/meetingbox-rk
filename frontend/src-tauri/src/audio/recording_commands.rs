@@ -1028,10 +1028,12 @@ pub async fn get_recording_state() -> serde_json::Value {
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
 
     if let Some(manager) = manager_guard.as_ref() {
+        let is_paused = manager.is_paused();
         serde_json::json!({
             "is_recording": is_recording,
-            "is_paused": manager.is_paused(),
+            "is_paused": is_paused,
             "is_active": manager.is_active(),
+            "speech_active": is_recording && !is_paused && super::pipeline::is_speech_active(),
             "recording_duration": manager.get_recording_duration(),
             "active_duration": manager.get_active_recording_duration(),
             "total_pause_duration": manager.get_total_pause_duration(),
@@ -1042,6 +1044,7 @@ pub async fn get_recording_state() -> serde_json::Value {
             "is_recording": is_recording,
             "is_paused": false,
             "is_active": false,
+            "speech_active": false,
             "recording_duration": null,
             "active_duration": null,
             "total_pause_duration": 0.0,

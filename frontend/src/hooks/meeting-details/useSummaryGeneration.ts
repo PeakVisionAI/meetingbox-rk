@@ -29,22 +29,21 @@ async function resolveSummaryLanguage(
   }
 
   try {
-    const cachedDetected = await readCachedDetectedSummaryLanguage(meetingId);
-    if (cachedDetected) return cachedDetected;
-  } catch (err) {
-    console.warn('Failed to load cached detected summary language:', err);
-  }
-
-  try {
     const detection = await detectAndCacheSummaryLanguage(meetingId, transcriptTexts);
     if (detection.reason === 'tie') {
       toast.warning('Bilingual transcript detected', {
         description: 'Pick a summary language manually if Auto chooses the wrong fallback.',
       });
     }
-    return detection.language;
+    if (detection.language) return detection.language;
   } catch (err) {
     console.warn('Failed to detect transcript summary language:', err);
+  }
+
+  try {
+    return await readCachedDetectedSummaryLanguage(meetingId);
+  } catch (err) {
+    console.warn('Failed to load cached detected summary language:', err);
     return null;
   }
 }

@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -12,6 +15,12 @@ use super::devices::AudioDevice;
 use super::recording_state::{AudioChunk, AudioError, RecordingState, DeviceType};
 use super::audio_processing::{audio_to_mono, LoudnessNormalizer, NoiseSuppressionProcessor, HighPassFilter};
 use super::vad::{ContinuousVadProcessor};
+
+static SPEECH_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_speech_active() -> bool {
+    SPEECH_ACTIVE.load(Ordering::Relaxed)
+}
 
 /// Ring buffer for synchronized audio mixing
 /// Accumulates samples from mic and system streams until we have aligned windows
@@ -740,6 +749,8 @@ impl AudioPipeline {
         system_device_name: String,
         system_device_kind: super::device_detection::InputDeviceKind,
     ) -> Self {
+        SPEECH_ACTIVE.store(false, Ordering::Relaxed);
+
         // Log device characteristics for adaptive buffering
         info!("🎛️ AudioPipeline initializing with device characteristics:");
         info!("   Mic: '{}' ({:?}) - Buffer: {:?}",
@@ -968,6 +979,7 @@ impl AudioPipeline {
 
                             let speech_detected =
                                 mix_rms >= ENERGY_SPEECH_RMS || self.vad_processor.is_holding_speech();
+                            SPEECH_ACTIVE.store(speech_detected, Ordering::Relaxed);
                             if speech_detected {
                                 self.energy_quiet_windows = 0;
                                 let resampled = downsample_for_energy_fallback(
@@ -1020,6 +1032,8 @@ impl AudioPipeline {
                 }
             }
         }
+
+        SPEECH_ACTIVE.store(false, Ordering::Relaxed);
 
         // Flush VAD state for cleanup only. Completed VAD segments are not sent
         // because live transcription is driven by fixed-duration speech windows.

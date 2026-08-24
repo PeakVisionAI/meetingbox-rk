@@ -54,6 +54,7 @@ pub mod parakeet_engine;
 pub mod productivity;
 pub mod state;
 pub mod summary;
+pub mod system_power;
 pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
@@ -535,6 +536,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             is_recording,
+            system_power::system_power_action,
             get_transcription_status,
             read_audio_file,
             save_transcript,

@@ -28,6 +28,7 @@ interface RecordingState {
   isRecording: boolean;           // Is a recording session active
   isPaused: boolean;              // Is the recording paused
   isActive: boolean;              // Is actively recording (recording && !paused)
+  speechActive: boolean;          // Is the mixed audio currently above the speech threshold
   recordingDuration: number | null;  // Total duration including pauses
   activeDuration: number | null;     // Active recording time (excluding pauses)
 
@@ -61,6 +62,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
     isRecording: false,
     isPaused: false,
     isActive: false,
+    speechActive: false,
     recordingDuration: null,
     activeDuration: null,
     status: RecordingStatus.IDLE,  // NEW: Initialize with IDLE status
@@ -93,11 +95,10 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         isRecording: backendState.is_recording,
         isPaused: backendState.is_paused,
         isActive: backendState.is_active,
+        speechActive: backendState.speech_active,
         recordingDuration: backendState.recording_duration,
         activeDuration: backendState.active_duration,
       }));
-
-      console.log('[RecordingStateContext] Synced with backend:', backendState);
     } catch (error) {
       console.error('[RecordingStateContext] Failed to sync with backend:', error);
       // Don't update state on error - keep current state
@@ -112,8 +113,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
       clearInterval(pollingIntervalRef.current);
     }
 
-    console.log('[RecordingStateContext] Starting state polling (500ms interval)');
-    pollingIntervalRef.current = setInterval(syncWithBackend, 500);
+    console.log('[RecordingStateContext] Starting state polling (200ms interval)');
+    pollingIntervalRef.current = setInterval(syncWithBackend, 200);
   };
 
   /**
@@ -144,6 +145,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             isRecording: true,
             isPaused: false,
             isActive: true,
+            speechActive: false,
             status: RecordingStatus.RECORDING,  // NEW: Set status to RECORDING
           }));
           startPolling();
@@ -171,6 +173,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
               isRecording: false,
               isPaused: false,
               isActive: false,
+              speechActive: false,
               recordingDuration: null,
               activeDuration: null,
             };
@@ -186,6 +189,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             ...prev,
             isPaused: true,
             isActive: false,
+            speechActive: false,
           }));
         });
         unsubscribers.push(unlistenPaused);
@@ -197,6 +201,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             ...prev,
             isPaused: false,
             isActive: true,
+            speechActive: false,
           }));
         });
         unsubscribers.push(unlistenResumed);

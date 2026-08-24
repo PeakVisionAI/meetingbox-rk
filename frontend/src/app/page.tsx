@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Play } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
@@ -19,11 +19,20 @@ import { indexedDBService } from '@/services/indexedDBService';
 import { useRecordingStateSync } from '@/hooks/useRecordingStateSync';
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { formatMinuteRange, SUMMARY_INTERVAL_SECONDS, useMinuteSummaries } from '@/hooks/useMinuteSummaries';
-import { MeetingStatusFeedback } from '@/components/MeetingStatusFeedback';
 
 function formatClock(seconds: number | null) {
   const value = Math.max(0, Math.floor(seconds || 0));
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+}
+
+function formatMeetingDuration(seconds?: number | null) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return '暂无时长';
+  const totalSeconds = Math.max(1, Math.round(seconds));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  if (minutes === 0) return `${remainingSeconds}s`;
+  if (remainingSeconds === 0) return `${minutes}min`;
+  return `${minutes}m ${remainingSeconds}s`;
 }
 
 export default function Home() {
@@ -39,6 +48,7 @@ export default function Home() {
   const [quickMeetingTemplate, setQuickMeetingTemplate] = useState('standard_meeting');
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
+  const [meetingStartedAt, setMeetingStartedAt] = useState<number | null>(null);
   const stopResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
 
   const { handleRecordingStart } = useRecordingStart(isRecordingState, setIsRecordingState, undefined);
@@ -71,6 +81,13 @@ export default function Home() {
   const speakerCount = new Set(liveSegments.map((item) => item.speakerLabel).filter(Boolean)).size;
   const speakerCountLabel = speakerCount > 0 ? `${speakerCount} 个` : (transcripts.length > 0 ? '待识别' : '0 个');
 
+  const formatMeetingDate = (value?: string) => {
+    if (!value) return '暂无时间';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '暂无时间';
+    return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}  ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  };
+
   const requestStopConfirmation = async () => new Promise<boolean>((resolve) => {
     stopResolverRef.current = resolve;
     setStopConfirmOpen(true);
@@ -82,8 +99,14 @@ export default function Home() {
     setStopConfirmOpen(false);
   };
 
+  const stopMeetingFromHeader = () => {
+    if (!recordingState.isRecording || isStopping) return;
+    window.dispatchEvent(new CustomEvent('end-meeting-from-header'));
+  };
+
   const startMeeting = async (name?: string) => {
     try {
+      setMeetingStartedAt(Date.now());
       sessionStorage.setItem('pending_summary_template_id', quickMeetingTemplate);
       sessionStorage.removeItem('pending_minute_summaries');
       await handleRecordingStart(name);
@@ -127,33 +150,76 @@ export default function Home() {
   };
 
   const showLive = recordingState.isRecording || recordingState.status === RecordingStatus.STOPPING || recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS || recordingState.status === RecordingStatus.SAVING;
+  const liveStart = meetingStartedAt ? new Date(meetingStartedAt) : new Date();
+  const liveStartLabel = `${liveStart.getFullYear()}.${String(liveStart.getMonth() + 1).padStart(2, '0')}.${String(liveStart.getDate()).padStart(2, '0')} ${String(liveStart.getHours()).padStart(2, '0')}:${String(liveStart.getMinutes()).padStart(2, '0')}`;
 
   return (
     <div className="hyos-page">
       {!showLive && (
         <>
           <section className="hyos-launcher" aria-label="会议工作台">
-            <button className="hyos-launch primary" onClick={() => setQuickMeetingOpen(true)}><span><Play size={21} /></span><strong>快速会议</strong></button>
-            <button className="hyos-launch" onClick={() => router.push('/files')}><span><FileText size={21} /></span><strong>会议文件管理</strong><small>查看和管理会议资料</small></button>
+            <button className="hyos-launch primary" onClick={() => setQuickMeetingOpen(true)}><span><img src="/hyos-play-mark.png" alt="" /></span><strong>快速会议</strong><small>立即开始录音与转写</small></button>
+            <button className="hyos-launch" onClick={() => router.push('/files')}><span><img src="/hyos-folder-mark.png" alt="" /></span><strong>会议管理</strong><small>查看和管理会议资料</small><ChevronRight className="hyos-launch-arrow" size={22} /></button>
           </section>
           <section className="hyos-panel hyos-recent">
-            <div className="hyos-panel-head"><h2>最近会议</h2><button onClick={() => router.push('/files')}>查看全部</button></div>
-            {meetings.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : meetings.slice(0, 3).map((meeting) => <button key={meeting.id} className="hyos-record-row" onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}><span className="hyos-record-icon">会</span><span><b>{meeting.title}</b><small>本地会议文件</small></span><em>已完成</em></button>)}
+            <div className="hyos-panel-head"><h2>最近会议</h2><button onClick={() => router.push('/files')}>查看全部 <ChevronRight size={15} /></button></div>
+            {meetings.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : meetings.slice(0, 3).map((meeting) => <button key={meeting.id} className="hyos-record-row" onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}><span className="hyos-record-icon"><img src="/hyos-document-mark.png" alt="" /></span><span className="hyos-record-copy"><span className="hyos-record-title"><b>{meeting.title}</b><em>{formatMeetingDuration(meeting.duration_seconds)}</em></span><small>{formatMeetingDate(meeting.created_at)}</small></span></button>)}
           </section>
-          <div className="hyos-device-strip"><div><b>设备状态</b><span><i />本地运行</span></div><div><span>本地模型服务</span><strong>已配置</strong></div><div><span>会议麦克风</span><strong>{selectedDevices.micDevice || '系统默认'}</strong></div><div><span>会议资料</span><strong>本地保存</strong></div></div>
+          <div className="hyos-device-strip"><div><b>设备状态</b><span><i />本地运行</span></div><div><b>本地模型服务</b><strong>已配置</strong></div><div><b>会议麦克风</b><strong>{selectedDevices.micDevice || '系统默认'}</strong></div></div>
         </>
       )}
 
       {showLive && (
         <section className="hyos-live-page">
-          <div className="hyos-live-heading"><h1>{meetingTitle || '日常会议'}</h1></div>
-          <div className="hyos-live-meta"><span className="hyos-live-record"><i />{recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS ? '正在处理' : '正在录音'}</span><span>会议时间 <b>{new Date().toLocaleString('zh-CN', { hour12: false }).slice(0, 16)}</b></span><span>当前时长 <b>{formatClock(recordingState.activeDuration)}</b></span><span>总结模板 <b>{selectedTemplateName}</b></span><span>内容分段 <b>{transcripts.length} 段</b></span><span className="hyos-live-local">转写中</span></div>
-          <MeetingStatusFeedback isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing || isStopping} summaryStatus={generatingMinute !== null ? 'processing' : 'idle'} />
-          <div className="hyos-live-grid">
-            <div className="hyos-transcript-pane"><div className="hyos-pane-title"><span>逐字稿</span><em>{transcripts.length} 段</em></div><div className="hyos-transcript-virtual"><VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} /></div></div>
-            <aside className="hyos-summary-pane"><div className="hyos-pane-title"><span>会议分时摘要</span><em><i />每10分钟更新</em></div><div className="hyos-minute-summary-list">{minuteSummaries.length === 0 && generatingMinute === null ? <div className="hyos-summary-placeholder">首个10分钟结束后，这里会显示对应时段的内容摘要。</div> : minuteSummaries.map((summary) => <article className={`hyos-minute-summary ${summary.status || 'completed'}`} key={summary.minute_index}><div><time>{formatMinuteRange(summary.start_seconds, summary.end_seconds)}</time><span>{summary.status === 'empty' ? '无有效发言' : summary.status === 'error' ? '生成失败' : '已完成'}</span></div><p>{summary.summary || '本时段没有检测到有效发言。'}</p></article>)}{generatingMinute !== null && <div className="hyos-minute-generating"><i /><div><b>{formatMinuteRange(generatingMinute * SUMMARY_INTERVAL_SECONDS, (generatingMinute + 1) * SUMMARY_INTERVAL_SECONDS)}</b><span>正在生成本时段摘要</span></div></div>}</div></aside>
+          <div className="hyos-live-heading">
+            <div className="hyos-live-title-row">
+              <span className="hyos-live-meeting-mark"><img src="/hyos-document-mark.png" alt="" /></span>
+              <h1>{meetingTitle || '日常会议'}</h1>
+              <span className="hyos-live-record"><i />{recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS ? '处理中' : '录音中'} {formatClock(recordingState.activeDuration)}</span>
+              <button className="hyos-live-end-button" onClick={stopMeetingFromHeader} disabled={!recordingState.isRecording || isStopping}>结束会议</button>
+            </div>
+            <div className="hyos-live-meta"><span>{liveStartLabel}–{formatClock(recordingState.activeDuration)}</span><span>总结模板:<b>{selectedTemplateName}</b></span><span>内容分段:<b>{transcripts.length}段</b></span></div>
           </div>
-          <div className="hyos-live-controls"><RecordingControls isRecording={recordingState.isRecording} onRecordingStop={(callApi = true, speakerCalibration) => handleRecordingStop(callApi, speakerCalibration)} onRecordingStart={() => startMeeting(meetingTitle)} onTranscriptReceived={() => {}} onStopInitiated={() => setIsStopping(true)} onBeforeStop={requestStopConfirmation} barHeights={['12px', '24px', '17px']} onTranscriptionError={(message) => toast.error(message)} isRecordingDisabled={isRecordingDisabled} isParentProcessing={isStopping} selectedDevices={selectedDevices} meetingName={meetingTitle} /></div>
+          <div className="hyos-live-grid">
+            <div className="hyos-transcript-pane">
+              <div className="hyos-pane-title"><div className="hyos-pane-title-main"><span>逐字稿</span><em className="hyos-transcript-mode">精选发言人</em></div><em>{transcripts.length}段</em></div>
+              <div className="hyos-transcript-virtual">
+                {liveSegments.length === 0 ? (
+                  <div className="hyos-live-empty-transcript"><i /><strong>等待语音转写</strong><span>开始发言后，逐字稿会显示在这里</span></div>
+                ) : (
+                  <VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} />
+                )}
+              </div>
+            </div>
+            <aside className="hyos-summary-pane" aria-label="会议分时摘要">
+              <div className="hyos-summary-heading">
+                <h2>会议分时摘要</h2>
+                <span>每8分钟更新</span>
+              </div>
+              <div className="hyos-minute-summary-list">
+                {minuteSummaries.length === 0 && !generatingMinute && (
+                  <div className="hyos-summary-empty-state">
+                    <div className="hyos-summary-empty-icon">✦</div>
+                    <strong>摘要生成中</strong>
+                    <p>根据每个时间段的转写内容生成重点、决定和待办。</p>
+                  </div>
+                )}
+                {minuteSummaries.map((summary, index) => (
+                  <article key={summary.minute_index} className={`hyos-minute-summary${index === 0 ? ' is-current' : ''}${summary.status ? ` ${summary.status}` : ''}`}>
+                    <div className="hyos-minute-summary-top">
+                      <time>{formatMinuteRange(summary.start_seconds, summary.end_seconds)}</time>
+                      <span>{summary.status === 'error' ? '生成失败' : summary.status === 'empty' ? '暂无内容' : '已生成'}</span>
+                    </div>
+                    <p>{summary.summary || '本时段暂未检测到有效发言。'}</p>
+                  </article>
+                ))}
+                {generatingMinute !== null && (
+                  <div className="hyos-summary-generating"><i />正在生成第 {generatingMinute + 1} 段摘要…</div>
+                )}
+              </div>
+            </aside>
+          </div>
+          <div className="hyos-live-controls"><RecordingControls isRecording={recordingState.isRecording} isPaused={recordingState.isPaused} hasSpeech={recordingState.speechActive} onRecordingStop={(callApi = true, speakerCalibration) => handleRecordingStop(callApi, speakerCalibration)} onRecordingStart={() => startMeeting(meetingTitle)} onTranscriptReceived={() => {}} onStopInitiated={() => setIsStopping(true)} onBeforeStop={requestStopConfirmation} barHeights={['6px', '12px', '18px', '10px', '16px', '8px', '20px', '14px', '9px', '16px', '7px', '13px', '18px', '11px', '8px']} recordingDuration={formatClock(recordingState.activeDuration)} onTranscriptionError={(message) => toast.error(message)} isRecordingDisabled={isRecordingDisabled} isParentProcessing={isStopping} selectedDevices={selectedDevices} meetingName={meetingTitle} /></div>
         </section>
       )}
 

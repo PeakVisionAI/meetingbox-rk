@@ -3,8 +3,8 @@ import type { Transcript } from '@/types';
 import { minuteSummaryService, type MinuteSummaryRecord } from '@/services/minuteSummaryService';
 
 const SUMMARY_GRACE_SECONDS = 5;
-export const SUMMARY_INTERVAL_SECONDS = 10 * 60;
-const SUMMARY_CACHE_VERSION = 'ten-minute-v1';
+export const SUMMARY_INTERVAL_SECONDS = 8 * 60;
+const SUMMARY_CACHE_VERSION = 'eight-minute-v1';
 const SUMMARY_CACHE_VERSION_KEY = 'pending_minute_summaries_version';
 const SUMMARY_CACHE_KEY = 'pending_minute_summaries';
 
