@@ -5,6 +5,9 @@ set -euo pipefail
 package_path=$1
 license_path=$2
 
+[ -f "$package_path" ] || { echo "Package not found: $package_path" >&2; exit 1; }
+[ -f "$license_path" ] || { echo "License not found: $license_path" >&2; exit 1; }
+
 "$(dirname "$0")/install-license.sh" "$license_path"
 "$(dirname "$0")/install-power-policy.sh"
 if [[ "$package_path" == *.deb ]]; then

@@ -7,6 +7,10 @@ const resolveFromTiptapPm = (pkg) =>
 const nextConfig = {
   reactStrictMode: false, // Disabled for BlockNote compatibility
   output: 'export',
+  // Release artifacts must not expose browser source maps or framework headers.
+  productionBrowserSourceMaps: false,
+  poweredByHeader: false,
+  compress: true,
   images: {
     unoptimized: true,
   },

@@ -130,6 +130,14 @@ sudo frontend/src-tauri/scripts/prepare-device-release.sh \
 
 详细说明见 [设备许可证与交付](docs/device-license.md)。交付前删除源码、`.git`、`target/`、调试日志和所有私钥。
 
+发布加固构建可执行：
+
+```bash
+./scripts/build-release.sh
+```
+
+该脚本使用 Release 配置构建 Tauri 应用，关闭浏览器 source map，生成 `SHA256SUMS`，并审计交付目录中是否混入源码、依赖目录或调试文件。它不会加密客户端代码；前端和二进制仍应按“可被拥有 root 权限者逆向”设计。
+
 ## 数据与安全
 
 - 首次启动由操作者设置管理员密码，仓库和发布包不包含默认管理员密码。
