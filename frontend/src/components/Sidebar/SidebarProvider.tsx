@@ -115,7 +115,8 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const fetchSettings = async () => {
-      setServerAddress('http://localhost:5167');
+      // boxd is the local FastAPI gateway used by deployed devices.
+      setServerAddress('http://127.0.0.1:8080');
       setTranscriptServerAddress('http://127.0.0.1:8178/stream');
     };
     fetchSettings();

@@ -194,7 +194,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     useAutoScroll({
         scrollRef,
         segments,
-        isRecording,
+        isRecording: isRecording || isProcessing || isStopping,
         isPaused,
         virtualizer,
         virtualizationThreshold: VIRTUALIZATION_THRESHOLD,

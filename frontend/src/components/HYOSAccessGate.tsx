@@ -61,6 +61,7 @@ export function HYOSAccessGate({ children }: { children: React.ReactNode }) {
   return (
     <main className="hyos-login-screen">
       <img className="hyos-login-art" src="/register-page.svg" alt="AI智能会议助手" />
+      <div className="hyos-login-tagline">让会议更轻松</div>
       <section className="hyos-login-card" aria-labelledby="hyos-login-title">
         <h1 id="hyos-login-title">AI智能会议助手</h1>
         <h2>{initialized ? '管理员登录' : '首次初始化'}</h2>

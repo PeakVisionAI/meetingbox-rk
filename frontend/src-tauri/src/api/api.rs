@@ -17,8 +17,9 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 
-// Hardcoded server URL
-const APP_SERVER_URL: &str = "http://localhost:5167";
+// The bundled FastAPI boxd service listens on 8080 on deployed devices.
+// Keep this loopback-only so the desktop app does not depend on an external host.
+const APP_SERVER_URL: &str = "http://127.0.0.1:8080";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {

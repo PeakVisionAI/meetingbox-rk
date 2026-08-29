@@ -50,6 +50,8 @@ export default function Home() {
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
   const [meetingStartedAt, setMeetingStartedAt] = useState<number | null>(null);
   const stopResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const minuteSummaryScrollRef = useRef<HTMLDivElement>(null);
+  const shouldFollowMinuteSummaryRef = useRef(true);
 
   const { handleRecordingStart } = useRecordingStart(isRecordingState, setIsRecordingState, undefined);
   const { handleRecordingStop, isStopping, setIsStopping } = useRecordingStop(setIsRecordingState, () => {});
@@ -152,6 +154,31 @@ export default function Home() {
   const showLive = recordingState.isRecording || recordingState.status === RecordingStatus.STOPPING || recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS || recordingState.status === RecordingStatus.SAVING;
   const liveStart = meetingStartedAt ? new Date(meetingStartedAt) : new Date();
   const liveStartLabel = `${liveStart.getFullYear()}.${String(liveStart.getMonth() + 1).padStart(2, '0')}.${String(liveStart.getDate()).padStart(2, '0')} ${String(liveStart.getHours()).padStart(2, '0')}:${String(liveStart.getMinutes()).padStart(2, '0')}`;
+  const latestMinuteSummary = minuteSummaries[minuteSummaries.length - 1];
+
+  useEffect(() => {
+    const container = minuteSummaryScrollRef.current;
+    if (!showLive || !container) return;
+
+    shouldFollowMinuteSummaryRef.current = true;
+    const handleScroll = () => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      shouldFollowMinuteSummaryRef.current = distanceFromBottom <= 80;
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [showLive]);
+
+  useEffect(() => {
+    const container = minuteSummaryScrollRef.current;
+    if (!showLive || !container || !shouldFollowMinuteSummaryRef.current) return;
+
+    const frame = requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [showLive, minuteSummaries.length, latestMinuteSummary?.summary, latestMinuteSummary?.status, generatingMinute]);
 
   return (
     <div className="hyos-page">
@@ -196,7 +223,7 @@ export default function Home() {
                 <h2>会议分时摘要</h2>
                 <span>每8分钟更新</span>
               </div>
-              <div className="hyos-minute-summary-list">
+              <div ref={minuteSummaryScrollRef} className="hyos-minute-summary-list">
                 {minuteSummaries.length === 0 && !generatingMinute && (
                   <div className="hyos-summary-empty-state">
                     <div className="hyos-summary-empty-icon">✦</div>

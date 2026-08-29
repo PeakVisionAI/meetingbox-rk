@@ -1,5 +1,5 @@
 export const uiText = {
-  welcomeTitle: '欢迎使用会议助手',
+  welcomeTitle: '欢迎使用 AI智能会议助手',
   welcomeHint: '开始录音后即可看到实时转写',
   listening: '正在聆听…',
   speakToSee: '开口说话后会显示转写',
@@ -75,10 +75,10 @@ export const uiText = {
   autoLanguage: '自动',
   pickSummaryLanguage: '选择纪要语言',
 
-  appName: '会议助手',
-  aboutApp: '关于会议助手',
-  aboutTagline: '实时转写与纪要都在本机完成，内容不离开设备。',
-  aboutDifference: '会议助手有什么不同',
+  appName: 'AI智能会议助手',
+  aboutApp: '关于 AI智能会议助手',
+  aboutTagline: 'AI 智能会议助手，实时转写与纪要都在本机完成。',
+  aboutDifference: 'AI智能会议助手的特点',
   privacyFirst: '隐私优先',
   privacyFirstHint: '转写和纪要都在本机处理，不经过云端。',
   useAnyModel: '使用本机模型',

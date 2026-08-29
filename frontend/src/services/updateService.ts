@@ -24,6 +24,16 @@ export interface UpdateProgress {
   percentage: number;
 }
 
+/** The first HYOS release. Tauri provides the packaged value at runtime; this
+ * fallback keeps the settings page usable in the browser preview. */
+export const FALLBACK_VERSION = '0.1.0';
+
+export function formatDisplayVersion(version: string): string {
+  const normalized = version.trim().replace(/^v/i, '');
+  const parts = normalized.split('.');
+  return parts.length >= 2 ? `v${parts[0]}.${parts[1]}` : `v${normalized}`;
+}
+
 /**
  * Update Service
  * Singleton service for managing app updates
@@ -41,12 +51,12 @@ export class UpdateService {
   async checkForUpdates(force = false): Promise<UpdateInfo> {
     if (this.updateCheckInProgress) throw new Error('Update check already in progress');
     if (!force && this.wasCheckedRecently()) {
-      return { available: false, currentVersion: await getVersion() };
+      return { available: false, currentVersion: await this.getCurrentVersion() };
     }
     this.updateCheckInProgress = true;
     this.lastCheckTime = Date.now();
     try {
-      const currentVersion = await getVersion();
+      const currentVersion = await this.getCurrentVersion();
       const update = await check();
       return update?.available
         ? { available: true, currentVersion, version: update.version, date: update.date, body: update.body }
@@ -77,7 +87,11 @@ export class UpdateService {
    * @returns Promise with version string
    */
   async getCurrentVersion(): Promise<string> {
-    return getVersion();
+    try {
+      return await getVersion();
+    } catch {
+      return FALLBACK_VERSION;
+    }
   }
 
   /**
