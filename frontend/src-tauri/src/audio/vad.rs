@@ -27,6 +27,8 @@ pub struct ContinuousVadProcessor {
     last_logged_state: bool,
 }
 
+const MAX_CURRENT_SPEECH_SAMPLES: usize = 16_000 * 30;
+
 impl ContinuousVadProcessor {
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
         // Silero VAD MUST use 16kHz - this is hardcoded requirement
@@ -81,6 +83,15 @@ impl ContinuousVadProcessor {
 
     pub fn is_holding_speech(&self) -> bool {
         self.in_speech || !self.current_speech.is_empty()
+    }
+
+    /// Drop stale buffered audio when a noisy input keeps VAD in a holding state.
+    /// The live pipeline uses fixed windows, so retaining an unbounded VAD copy
+    /// only increases memory pressure and cannot improve live transcription.
+    pub fn clear_holding_speech(&mut self) {
+        self.current_speech.clear();
+        self.in_speech = false;
+        self.last_logged_state = false;
     }
 
     fn times_for_span(&self, sample_count: usize, end_samples: usize) -> (f64, f64) {
@@ -289,6 +300,11 @@ impl ContinuousVadProcessor {
         // Accumulate speech if we're currently in a speech state
         if self.in_speech {
             self.current_speech.extend_from_slice(chunk);
+            if self.current_speech.len() > MAX_CURRENT_SPEECH_SAMPLES {
+                let excess = self.current_speech.len() - MAX_CURRENT_SPEECH_SAMPLES;
+                self.current_speech.drain(..excess);
+                warn!("VAD speech buffer capped at 30s; dropping {} stale samples", excess);
+            }
         }
 
         self.processed_samples += chunk.len();
@@ -604,4 +620,3 @@ mod tests {
         }
     }
 }
-

@@ -166,7 +166,7 @@ impl AudioDeviceMonitor {
         stop_signal: Arc<tokio::sync::Notify>,
     ) {
         let mut last_device_list = Vec::new();
-        let check_interval = Duration::from_secs(2); // Poll every 2 seconds
+        let mut check_interval = Duration::from_secs(30); // Normal polling; use 2s while missing
 
         loop {
             // Check for stop signal with timeout
@@ -242,11 +242,12 @@ impl AudioDeviceMonitor {
             let next_interval = if has_missing {
                 Duration::from_secs(2) // Fast polling when device missing
             } else {
-                Duration::from_secs(5) // Slower polling when all devices present
+                Duration::from_secs(30) // Slower polling when all devices present
             };
 
             if next_interval != check_interval {
                 debug!("Adjusting monitor interval to {:?}", next_interval);
+                check_interval = next_interval;
             }
         }
     }

@@ -17,10 +17,39 @@ static SEQUENCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 // Speech detection flag - reset per recording session
 static SPEECH_DETECTED_EMITTED: AtomicBool = AtomicBool::new(false);
 
+fn contains_recognized_content(text: &str) -> bool {
+    // Reject empty/punctuation-only provider hallucinations such as
+    // "候选发言人：。" while preserving short valid utterances like "我来".
+    let content = text
+        .split_once('：')
+        .or_else(|| text.split_once(':'))
+        .map(|(_, value)| value)
+        .unwrap_or(text);
+    content.chars().any(|ch| ch.is_alphanumeric())
+}
+
 /// Reset the speech detected flag for a new recording session
 pub fn reset_speech_detected_flag() {
     SPEECH_DETECTED_EMITTED.store(false, Ordering::SeqCst);
     info!("🔍 SPEECH_DETECTED_EMITTED reset to: {}", SPEECH_DETECTED_EMITTED.load(Ordering::SeqCst));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_recognized_content;
+
+    #[test]
+    fn rejects_empty_and_punctuation_only_results() {
+        assert!(!contains_recognized_content(""));
+        assert!(!contains_recognized_content("候选发言人：。"));
+        assert!(!contains_recognized_content("...!?"));
+    }
+
+    #[test]
+    fn keeps_short_valid_results() {
+        assert!(contains_recognized_content("我来"));
+        assert!(contains_recognized_content("hello"));
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -174,7 +203,9 @@ pub fn start_transcription_task<R: Runtime>(
                                     // Check confidence threshold (or accept if no confidence provided)
                                     let meets_threshold = confidence_opt.map_or(true, |c| c >= confidence_threshold);
 
-                                    if !transcript.trim().is_empty() && meets_threshold {
+                                    if contains_recognized_content(&transcript)
+                                        && meets_threshold
+                                    {
                                         // PERFORMANCE: Only log transcription results, not every processing step
                                         info!("✅ Worker {} transcribed: {} (confidence: {}, partial: {})",
                                               worker_id, transcript, confidence_str, is_partial);

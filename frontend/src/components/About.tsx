@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from '@tauri-apps/api/core';
-import { getVersion } from '@tauri-apps/api/app';
 import AnalyticsConsentSwitch from "./AnalyticsConsentSwitch";
 import { UpdateDialog } from "./UpdateDialog";
-import { updateService, UpdateInfo } from '@/services/updateService';
+import { formatDisplayVersion, updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -11,14 +10,14 @@ import { uiText } from '@/lib/uiText';
 
 
 export function About() {
-    const [currentVersion, setCurrentVersion] = useState<string>('0.4.0');
+    const [currentVersion, setCurrentVersion] = useState<string>('0.1.0');
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
     const [isChecking, setIsChecking] = useState(false);
     const [showUpdateDialog, setShowUpdateDialog] = useState(false);
 
     useEffect(() => {
         // Get current version on mount
-        getVersion().then(setCurrentVersion).catch(console.error);
+        updateService.getCurrentVersion().then(setCurrentVersion).catch(console.error);
     }, []);
 
     const handleContactClick = async () => {
@@ -52,7 +51,7 @@ export function About() {
             {/* Compact Header */}
             <div className="text-center">
                 <h1 className="text-xl font-bold text-gray-900">{uiText.appName}</h1>
-                <span className="text-sm text-gray-500">v{currentVersion}</span>
+                <span className="text-sm text-gray-500">{formatDisplayVersion(currentVersion)}</span>
                 <p className="text-medium text-gray-600 mt-1">
                     {uiText.aboutTagline}
                 </p>

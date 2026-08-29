@@ -4,7 +4,6 @@ use serde::Deserialize;
 #[serde(rename_all = "lowercase")]
 pub enum PowerAction {
     Reboot,
-    Suspend,
     Poweroff,
 }
 
@@ -12,7 +11,6 @@ impl PowerAction {
     fn systemctl_verb(&self) -> &'static str {
         match self {
             Self::Reboot => "reboot",
-            Self::Suspend => "suspend",
             Self::Poweroff => "poweroff",
         }
     }
@@ -59,7 +57,6 @@ mod tests {
     #[test]
     fn maps_power_actions_to_fixed_systemctl_verbs() {
         assert_eq!(PowerAction::Reboot.systemctl_verb(), "reboot");
-        assert_eq!(PowerAction::Suspend.systemctl_verb(), "suspend");
         assert_eq!(PowerAction::Poweroff.systemctl_verb(), "poweroff");
     }
 }

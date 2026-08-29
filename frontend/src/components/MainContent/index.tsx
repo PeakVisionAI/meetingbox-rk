@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePathname, useRouter } from 'next/navigation';
-import { Settings, Play, Power, RotateCcw, Moon } from 'lucide-react';
+import { Settings, Play, Power, RotateCcw } from 'lucide-react';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
@@ -13,7 +13,7 @@ interface MainContentProps {
   children: React.ReactNode;
 }
 
-type PowerAction = 'reboot' | 'suspend' | 'poweroff';
+type PowerAction = 'reboot' | 'poweroff';
 
 const MainContent: React.FC<MainContentProps> = ({ children }) => {
   const router = useRouter();
@@ -122,7 +122,6 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
             <header><h2 id="power-dialog-title">电源选项</h2><p id="power-dialog-description">选择要执行的操作</p></header>
             <div className="hyos-power-options">
               <button onClick={() => void runPowerAction('reboot')} disabled={pendingPowerAction !== null}><span className="reboot"><RotateCcw size={31} /></span><b>{pendingPowerAction === 'reboot' ? '正在重启' : '重启'}</b></button>
-              <button onClick={() => void runPowerAction('suspend')} disabled={pendingPowerAction !== null}><span className="suspend"><Moon size={31} /></span><b>{pendingPowerAction === 'suspend' ? '正在睡眠' : '睡眠'}</b></button>
               <button onClick={() => void runPowerAction('poweroff')} disabled={pendingPowerAction !== null}><span className="poweroff"><Power size={31} /></span><b>{pendingPowerAction === 'poweroff' ? '正在关机' : '关机'}</b></button>
             </div>
             <button className="hyos-power-cancel" onClick={() => setPowerMenuOpen(false)} disabled={pendingPowerAction !== null}>取消</button>

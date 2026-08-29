@@ -406,13 +406,12 @@ button { cursor: pointer; }
 .hyos-power-dialog header { display: flex; align-items: baseline; gap: 10px; }
 .hyos-power-dialog h2 { margin: 0; font-size: 22px; line-height: 30px; letter-spacing: 0; }
 .hyos-power-dialog header p { margin: 0; color: #8a99ad; font-size: 13px; }
-.hyos-power-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 24px; }
+.hyos-power-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 24px; }
 .hyos-power-options button { display: flex; flex-direction: column; align-items: center; gap: 13px; min-width: 0; padding: 0; border: 0; background: transparent; color: #475166; }
 .hyos-power-options button:disabled { cursor: wait; opacity: .58; }
 .hyos-power-options button > span { width: 60px; height: 60px; display: grid; place-items: center; border-radius: 50%; transition: transform .15s ease, background-color .15s ease; }
 .hyos-power-options button:hover:not(:disabled) > span { transform: translateY(-2px); }
 .hyos-power-options .reboot { background: #f0f0f0; color: #363c4d; }
-.hyos-power-options .suspend { background: #f2f6ff; color: #2560eb; }
 .hyos-power-options .poweroff { background: #fff1f1; color: #e22e2d; }
 .hyos-power-options b { min-height: 24px; font-size: 17px; line-height: 24px; white-space: nowrap; }
 .hyos-power-cancel { width: 100%; margin-top: 24px; padding: 0; border: 0; background: transparent; color: #2560eb; font-size: 14px; }
@@ -520,8 +519,10 @@ button { cursor: pointer; }
 .hyos-access-loading { height: 100vh; display: grid; place-items: center; background: #f2f4f7; color: #60738d; }
 .hyos-login-screen { position: relative; width: 100%; height: 100vh; min-width: 1040px; min-height: 650px; overflow: hidden; background: #f2f4f7; }
 .hyos-login-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; user-select: none; pointer-events: none; }
-.hyos-login-card { position: absolute; top: 22.2222%; right: 9.7222%; width: 28.0556vw; height: 51.2222vh; min-width: 360px; min-height: 374px; box-sizing: border-box; padding: 2.36vw 2.22vw 1.67vw; border: 0; border-radius: 1.11vw; background: #fff; color: #10243c; font-family: "Noto Sans SC", "PingFang SC", sans-serif; }
+.hyos-login-tagline { position: absolute; z-index: 1; top: 18.4%; left: 9.35%; width: 31%; height: 8.6%; display: flex; align-items: center; padding-left: .95%; box-sizing: border-box; background: linear-gradient(90deg, #f4f7fd 0%, #f4f7fd 84%, rgb(244 247 253 / 0%) 100%); color: #10243c; font-family: "Noto Sans SC", "PingFang SC", sans-serif; font-size: 2.78vw; line-height: 1; font-weight: 700; letter-spacing: 0; }
+.hyos-login-card { position: absolute; top: 22.2222%; right: 9.7222%; width: 28.0556vw; height: 51.2222vh; min-width: 360px; min-height: 374px; display: flex; flex-direction: column; box-sizing: border-box; padding: 2.36vw 2.22vw 1.67vw; border: 0; border-radius: 1.11vw; background: #fff; color: #10243c; font-family: "Noto Sans SC", "PingFang SC", sans-serif; }
 .hyos-login-card h1 { margin: 0; color: #111b2d; font-size: 1.528vw; line-height: 2.08vw; font-weight: 700; letter-spacing: 0; }
+.hyos-login-card .hyos-login-product-name { margin: -.12vw 0 .72vw; color: #6c7b8d; font-size: .76vw; line-height: 1.1vw; }
 .hyos-login-card h2 { margin: .28vw 0 1.04vw; color: #2560eb; font-size: 1.18vw; line-height: 1.67vw; font-weight: 500; }
 .hyos-login-card > p { margin: 0 0 2.64vw; color: #6c7b8d; font-size: .833vw; line-height: 1.25vw; }
 .hyos-login-card label { display: block; margin: 0 0 .97vw; color: #1d2b3d; font-size: .833vw; line-height: 1.25vw; font-weight: 500; }
@@ -533,8 +534,8 @@ button { cursor: pointer; }
 .hyos-login-submit b { font-size: 1.39vw; line-height: 1; font-weight: 400; }
 .hyos-form-tip { margin: -.28vw 0 .69vw; color: #77869a; font-size: .76vw; }
 .hyos-warning { margin-top: .69vw; padding: .69vw .83vw; display: flex; flex-direction: column; gap: .21vw; border: 1px solid #f1ddbb; border-radius: .42vw; background: #fff8ed; color: #796a53; font-size: .76vw; }
-.hyos-login-status { position: absolute; left: 2.22vw; right: 2.22vw; bottom: 1.39vw; display: flex; align-items: center; gap: .56vw; margin: 0; padding-top: 0; border: 0; color: #2b9d6d; font-size: .76vw; font-weight: 500; }
-.hyos-login-status i { width: .49vw; height: .49vw; border-radius: 50%; background: #18b878; }
+.hyos-login-status { position: static; display: flex; align-items: center; gap: .56vw; width: 100%; min-height: 18px; box-sizing: border-box; margin-top: auto; padding-top: 14px; border: 0; color: #2b9d6d; font-size: .76vw; line-height: 18px; font-weight: 500; }
+.hyos-login-status i { flex: 0 0 auto; width: .49vw; height: .49vw; border-radius: 50%; background: #18b878; }
 @media (max-width: 1180px) {
   .hyos-login-screen { min-width: 0; }
   .hyos-login-card { right: 4%; min-width: 0; min-height: 420px; }
@@ -542,7 +543,7 @@ button { cursor: pointer; }
 @media (max-width: 860px) {
   .hyos-login-art { width: auto; min-width: 1440px; left: 0; right: auto; object-fit: initial; }
   .hyos-login-card { right: 24px; width: 360px; height: auto; min-height: 374px; padding: 30px 28px 22px; }
-  .hyos-login-card h1 { font-size: 20px; line-height: 28px; }.hyos-login-card h2 { font-size: 16px; line-height: 22px; }.hyos-login-card > p, .hyos-login-card label { font-size: 12px; line-height: 17px; }.hyos-login-card input { font-size: 14px; }.hyos-login-submit { font-size: 14px; }.hyos-form-tip, .hyos-warning, .hyos-login-status { font-size: 11px; }
+  .hyos-login-card h1 { font-size: 20px; line-height: 28px; }.hyos-login-card .hyos-login-product-name { margin: -2px 0 8px; font-size: 11px; line-height: 16px; }.hyos-login-card h2 { font-size: 16px; line-height: 22px; }.hyos-login-card > p, .hyos-login-card label { font-size: 12px; line-height: 17px; }.hyos-login-card input { font-size: 14px; }.hyos-login-submit { font-size: 14px; }.hyos-form-tip, .hyos-warning, .hyos-login-status { font-size: 11px; }
 }
 .hyos-back { display: inline-flex; align-items: center; gap: 7px; }
 .hyos-settings-page { padding-top: 0; }
@@ -573,6 +574,19 @@ button { cursor: pointer; }
 .hyos-settings-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .hyos-settings-section-head h2 { margin: 0 0 6px; font-size: 20px; }
 .hyos-settings-section-head p { margin: 0; color: var(--hyos-muted); font-size: 12px; }
+.hyos-version-settings { max-width: 760px; }
+.hyos-version-identity { display: flex; align-items: center; gap: 13px; margin-top: 26px; padding: 18px 0; border-top: 1px solid var(--hyos-line); border-bottom: 1px solid var(--hyos-line); }
+.hyos-version-mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 11px; background: var(--hyos-blue-soft); color: var(--hyos-blue); }
+.hyos-version-identity > div:nth-child(2) { display: flex; flex-direction: column; gap: 3px; }
+.hyos-version-identity strong { font-size: 17px; letter-spacing: 1.2px; }
+.hyos-version-identity span { color: var(--hyos-muted); font-size: 12px; }
+.hyos-version-identity > b { margin-left: auto; color: var(--hyos-blue); font-size: 17px; }
+.hyos-version-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.hyos-version-meta > div { padding: 13px 14px; border: 1px solid var(--hyos-line); border-radius: 9px; background: #fbfcfe; }
+.hyos-version-meta dt { color: var(--hyos-muted); font-size: 11px; }
+.hyos-version-meta dd { margin: 5px 0 0; color: var(--hyos-ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.hyos-version-note { display: flex; align-items: flex-start; gap: 8px; padding: 11px 12px; border-radius: 8px; background: #f0faf5; color: var(--hyos-green); font-size: 12px; line-height: 1.5; }
+@media (max-width: 760px) { .hyos-version-meta { grid-template-columns: 1fr; } }
 .hyos-template-list { margin-top: 18px; border-top: 1px solid var(--hyos-line); }
 .hyos-template-row { min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--hyos-line); }
 .hyos-template-row > div:first-child { min-width: 0; }
@@ -772,4 +786,131 @@ button { cursor: pointer; }
 @media (max-width: 1500px) {
   .hyos-main.hyos-live-main .hyos-live-page { padding-inline: 28px; }
   .hyos-main.hyos-live-main .hyos-live-grid { grid-template-columns: minmax(0, 2fr) minmax(360px, 1fr); gap: 24px; }
+}
+
+/* Desktop viewport adaptation. Keep the approved HYOS composition while
+   allowing 1280/1366/1440/1920 screens to use their available space. */
+html, body { min-width: 0; width: 100%; }
+body { overflow: hidden; }
+.hyos-main { width: 100%; min-width: 0; overflow: hidden; }
+.hyos-content { width: 100%; box-sizing: border-box; }
+.hyos-topbar { padding-inline: clamp(16px, 3vw, 40px); }
+
+/* Home */
+.hyos-home-main .hyos-content {
+  width: min(1040px, calc(100% - clamp(32px, 8vw, 112px)));
+  max-width: none;
+  padding: clamp(28px, 6.7vh, 60px) 0 clamp(28px, 8vh, 72px);
+}
+.hyos-home-main { overflow-y: auto; }
+.hyos-home-main .hyos-launcher,
+.hyos-home-main .hyos-recent,
+.hyos-home-main .hyos-device-strip { width: 100%; }
+.hyos-home-main .hyos-launch { min-height: clamp(150px, 23.5vh, 212px); }
+.hyos-home-main .hyos-recent { height: clamp(232px, 33vh, 295px); }
+.hyos-home-main .hyos-record-row { height: clamp(58px, 8.5vh, 77px); }
+.hyos-home-main .hyos-device-strip > div { height: clamp(64px, 8.5vh, 76px); min-height: 0; }
+
+/* Meeting-in */
+.hyos-main.hyos-live-main .hyos-live-page {
+  min-height: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: clamp(16px, 4vh, 36px) clamp(16px, 3vw, 40px) clamp(88px, 8vh, 112px);
+  overflow-y: auto;
+}
+.hyos-main.hyos-live-main .hyos-live-heading { width: 100%; height: auto; min-height: 96px; }
+.hyos-main.hyos-live-main .hyos-live-title-row { flex-wrap: wrap; row-gap: 8px; }
+.hyos-main.hyos-live-main .hyos-live-heading h1 { min-width: 0; font-size: clamp(26px, 2.78vw, 40px); line-height: 1.2; overflow-wrap: anywhere; }
+.hyos-main.hyos-live-main .hyos-live-meta { flex-wrap: wrap; margin-left: clamp(0px, 5.5vw, 79px); gap: 8px clamp(18px, 2.7vw, 39px); font-size: clamp(13px, 1.25vw, 18px); }
+.hyos-main.hyos-live-main .hyos-live-grid {
+  width: 100%;
+  height: clamp(420px, calc(100vh - 264px), 636px);
+  margin-top: clamp(16px, 3vh, 30px);
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: clamp(16px, 2.2vw, 32px);
+}
+.hyos-main.hyos-live-main .hyos-transcript-pane,
+.hyos-main.hyos-live-main .hyos-summary-pane { height: 100%; min-height: 0; }
+.hyos-main.hyos-live-main .hyos-pane-title { height: clamp(52px, 6vh, 64px); padding-inline: clamp(16px, 1.8vw, 26px); font-size: clamp(20px, 1.95vw, 28px); }
+.hyos-main.hyos-live-main .hyos-transcript-virtual { height: calc(100% - clamp(52px, 6vh, 64px)); }
+.hyos-main.hyos-live-main .hyos-transcript-scroll { padding-inline: clamp(16px, 1.8vw, 26px); }
+.hyos-main.hyos-live-main .hyos-transcript-scroll .flex-1 p { font-size: clamp(16px, 1.67vw, 24px); }
+.hyos-main.hyos-live-main .hyos-summary-heading { padding-inline: clamp(16px, 1.7vw, 24px); }
+.hyos-main.hyos-live-main .hyos-summary-heading h2 { font-size: clamp(18px, 1.67vw, 24px); }
+.hyos-main.hyos-live-main .hyos-live-controls { bottom: clamp(18px, 4vh, 44px); }
+
+/* Files, settings and meeting details */
+.hyos-files-page { height: calc(100vh - 72px); }
+.hyos-files-layout { grid-template-columns: clamp(280px, 29vw, 400px) minmax(0, 1fr); }
+.hyos-page-title { flex-wrap: wrap; }
+.hyos-settings-page { height: calc(100vh - 26px); overflow-y: auto; }
+.hyos-settings-tabs { flex-wrap: wrap; }
+.hyos-settings-workspace { max-height: none; }
+.hyos-details-page { height: calc(100vh - 72px); }
+.hyos-details-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.hyos-modal { width: min(520px, calc(100vw - 32px)); }
+
+/* Login */
+.hyos-login-screen { min-width: 0; }
+.hyos-login-card {
+  /* Keep the HTML layer aligned with the card baked into register-page.svg. */
+  right: 9.7222%;
+  width: 28.0556vw;
+  padding: 2.36vw 2.22vw 1.67vw;
+}
+.hyos-login-card h1 { font-size: 1.528vw; line-height: 2.08vw; }
+.hyos-login-card h2 { font-size: 1.18vw; line-height: 1.67vw; }
+.hyos-login-card > p, .hyos-login-card label { font-size: .833vw; line-height: 1.5; }
+.hyos-login-card input { font-size: .972vw; }
+.hyos-login-submit { font-size: .972vw; }
+
+@media (max-width: 1120px) {
+  .hyos-content { padding-inline: 24px; }
+  .hyos-home-main .hyos-content { width: calc(100% - 48px); }
+  .hyos-main.hyos-live-main .hyos-live-grid { grid-template-columns: minmax(0, 1.8fr) minmax(260px, 1fr); }
+  .hyos-settings-layout { grid-template-columns: 1fr; }
+  .hyos-template-section { grid-template-columns: 28px minmax(110px, .7fr) minmax(0, 1.3fr) 36px; }
+  .hyos-action-row { grid-template-columns: 24px minmax(0, 1fr) 110px 120px; }
+  .hyos-speaker-row { grid-template-columns: minmax(90px, .6fr) minmax(120px, 1fr) minmax(140px, 1fr) auto; }
+}
+
+@media (max-width: 900px) {
+  .hyos-topbar { height: 64px; }
+  .hyos-content { padding-inline: 18px; }
+  .hyos-home-main .hyos-content { width: calc(100% - 36px); padding-top: 28px; }
+  .hyos-home-main .hyos-launch strong { font-size: 20px; }
+  .hyos-home-main .hyos-launch small { font-size: 13px; }
+  .hyos-home-main .hyos-record-row b { font-size: 16px; }
+  .hyos-home-main .hyos-record-row small,
+  .hyos-home-main .hyos-device-strip span,
+  .hyos-home-main .hyos-device-strip strong { font-size: 13px; }
+  .hyos-main.hyos-live-main .hyos-live-grid { grid-template-columns: minmax(0, 1.65fr) minmax(240px, 1fr); gap: 14px; }
+  .hyos-main.hyos-live-main .hyos-live-meeting-mark,
+  .hyos-main.hyos-live-main .hyos-live-meeting-mark img { width: 48px; height: 46px; }
+  .hyos-main.hyos-live-main .hyos-live-meta { margin-left: 0; }
+  .hyos-files-layout { grid-template-columns: minmax(260px, .9fr) minmax(0, 1.1fr); gap: 14px; }
+  .hyos-file-row { grid-template-columns: minmax(0, 1fr) auto 32px; gap: 6px; }
+  .hyos-file-row em { font-size: 9px; }
+}
+
+@media (max-width: 720px) {
+  /* Small desktop windows still use a desktop layout, but stack secondary panes
+     so every action remains reachable without horizontal scrolling. */
+  .hyos-main.hyos-live-main .hyos-live-grid { height: auto; grid-template-columns: 1fr; }
+  .hyos-main.hyos-live-main .hyos-transcript-pane,
+  .hyos-main.hyos-live-main .hyos-summary-pane { height: 56vh; min-height: 360px; }
+  .hyos-files-page { height: auto; min-height: calc(100vh - 64px); overflow-y: auto; }
+  .hyos-files-layout, .hyos-details-body { grid-template-columns: 1fr; overflow: visible; }
+  .hyos-file-placeholder { min-height: 260px; }
+  .hyos-settings-page { height: auto; min-height: calc(100vh - 26px); }
+  .hyos-details-page { height: auto; min-height: calc(100vh - 64px); overflow-y: auto; }
+  .hyos-details-body { min-height: 720px; }
+  .hyos-details-transcript { border-right: 0; border-bottom: 1px solid var(--hyos-line); }
+  .hyos-template-fields, .hyos-hotword-form, .hyos-export-grid { grid-template-columns: 1fr; }
+  .hyos-template-section { grid-template-columns: 28px minmax(0, 1fr) 36px; }
+  .hyos-template-section input:last-of-type { grid-column: 2 / -1; }
+  .hyos-action-row, .hyos-speaker-row { grid-template-columns: 24px minmax(0, 1fr); }
+  .hyos-action-row > :nth-child(n + 3), .hyos-speaker-row > :nth-child(n + 3) { grid-column: 2; }
+  .hyos-login-card { left: 24px; right: 24px; width: auto; }
 }

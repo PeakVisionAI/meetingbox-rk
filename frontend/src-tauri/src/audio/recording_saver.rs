@@ -6,6 +6,7 @@ use tauri::{AppHandle, Runtime, Emitter};
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use super::recording_state::AudioChunk;
 use super::audio_processing::create_meeting_folder;
@@ -55,7 +56,10 @@ pub struct RecordingSaver {
     transcript_segments: Arc<Mutex<Vec<TranscriptSegment>>>,
     chunk_receiver: Option<mpsc::UnboundedReceiver<AudioChunk>>,
     is_saving: Arc<Mutex<bool>>,
+    last_transcript_write: Arc<Mutex<Option<Instant>>>,
 }
+
+const TRANSCRIPT_WRITE_INTERVAL: Duration = Duration::from_secs(5);
 
 impl RecordingSaver {
     pub fn new() -> Self {
@@ -67,6 +71,7 @@ impl RecordingSaver {
             transcript_segments: Arc::new(Mutex::new(Vec::new())),
             chunk_receiver: None,
             is_saving: Arc::new(Mutex::new(false)),
+            last_transcript_write: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -110,10 +115,21 @@ impl RecordingSaver {
             error!("Failed to lock transcript segments for adding segment {}", segment.id);
         }
 
-        // NEW: Save incrementally to disk
-        if let Some(folder) = &self.meeting_folder {
-            if let Err(e) = self.write_transcripts_json(folder) {
-                warn!("Failed to write incremental transcript update: {}", e);
+        // Limit full-file rewrites during long meetings. The final stop path
+        // always writes the complete transcript immediately.
+        let should_write = self.last_transcript_write.lock().map(|mut last| {
+            let now = Instant::now();
+            let due = last.map_or(true, |previous| now.duration_since(previous) >= TRANSCRIPT_WRITE_INTERVAL);
+            if due {
+                *last = Some(now);
+            }
+            due
+        }).unwrap_or(true);
+        if should_write {
+            if let Some(folder) = &self.meeting_folder {
+                if let Err(e) = self.write_transcripts_json(folder) {
+                    warn!("Failed to write incremental transcript update: {}", e);
+                }
             }
         }
     }
@@ -138,6 +154,11 @@ impl RecordingSaver {
     /// # Arguments
     /// * `auto_save` - If true, creates checkpoints and enables saving. If false, audio chunks are discarded.
     pub fn start_accumulation(&mut self, auto_save: bool) -> mpsc::UnboundedSender<AudioChunk> {
+        // Each meeting gets its own persistence cadence even though the manager
+        // reuses this saver instance across recordings.
+        if let Ok(mut last) = self.last_transcript_write.lock() {
+            *last = None;
+        }
         if auto_save {
             info!("Initializing incremental audio saver for recording (auto-save ENABLED)");
         } else {

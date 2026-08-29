@@ -213,8 +213,12 @@ fn mix_window_peak(samples: &[f32]) -> f32 {
 /// Silero often misses already-normalized / loopback speech on RK. Treat mix-window
 /// energy as speech so SenseVoice still gets segments when the recording file is loud.
 const ENERGY_SPEECH_RMS: f32 = 0.025;
+// Do not normalize near-silent input. Amplifying a USB/ALSA noise floor makes
+// Silero treat silence as speech and causes ASR hallucinations.
+const VAD_NORMALIZATION_MIN_PEAK: f32 = 0.01;
 const ENERGY_MIN_SAMPLES_16K: usize = 32000; // 2s before a live emit
 const ENERGY_FLUSH_MIN_SAMPLES_16K: usize = 32000; // 2s on stop
+const MAX_HOLDING_QUIET_WINDOWS: u32 = 10; // 1s at the 100ms mix-window cadence
 
 fn downsample_for_energy_fallback(samples: &[f32], sample_rate: u32) -> Vec<f32> {
     if sample_rate == 16000 {
@@ -734,6 +738,7 @@ pub struct AudioPipeline {
     energy_fallback_16k: Vec<f32>,
     mix_windows_seen: u64,
     energy_quiet_windows: u32,
+    holding_quiet_windows: u32,
     last_transcription_end: f64,
 }
 
@@ -807,6 +812,7 @@ impl AudioPipeline {
             energy_fallback_16k: Vec::new(),
             mix_windows_seen: 0,
             energy_quiet_windows: 0,
+            holding_quiet_windows: 0,
             last_transcription_end: 0.0,
         }
     }
@@ -948,7 +954,7 @@ impl AudioPipeline {
                             let mix_rms = mix_window_rms(&mixed_with_gain);
                             let mix_peak = mix_window_peak(&mixed_with_gain);
                             self.mix_windows_seen += 1;
-                            if self.mix_windows_seen <= 6 || self.mix_windows_seen % 8 == 0 {
+                            if self.mix_windows_seen <= 6 || self.mix_windows_seen % 80 == 0 {
                                 info!(
                                     "🎚️ Mix window #{} rms={:.4} peak={:.4} samples={}",
                                     self.mix_windows_seen,
@@ -959,8 +965,8 @@ impl AudioPipeline {
                             }
 
                             let mut vad_input = mixed_with_gain.clone();
-                            if mix_peak > 1e-4 && mix_peak < 0.35 {
-                                let gain = 0.5 / mix_peak;
+                            if mix_peak >= VAD_NORMALIZATION_MIN_PEAK && mix_peak < 0.35 {
+                                let gain = (0.5 / mix_peak).min(2.0);
                                 for sample in &mut vad_input {
                                     *sample *= gain;
                                 }
@@ -977,8 +983,20 @@ impl AudioPipeline {
                                 }
                             }
 
-                            let speech_detected =
-                                mix_rms >= ENERGY_SPEECH_RMS || self.vad_processor.is_holding_speech();
+                            let vad_holding = self.vad_processor.is_holding_speech();
+                            if mix_rms < ENERGY_SPEECH_RMS {
+                                self.holding_quiet_windows = self.holding_quiet_windows.saturating_add(1);
+                            } else {
+                                self.holding_quiet_windows = 0;
+                            }
+                            // Keep a short tail for natural pauses, then force the
+                            // gate closed even if the VAD session remains holding.
+                            let speech_detected = mix_rms >= ENERGY_SPEECH_RMS
+                                || (vad_holding && self.holding_quiet_windows <= MAX_HOLDING_QUIET_WINDOWS);
+                            if vad_holding && self.holding_quiet_windows == MAX_HOLDING_QUIET_WINDOWS + 1 {
+                                warn!("VAD remained active through quiet audio; clearing stale speech state");
+                                self.vad_processor.clear_holding_speech();
+                            }
                             SPEECH_ACTIVE.store(speech_detected, Ordering::Relaxed);
                             if speech_detected {
                                 self.energy_quiet_windows = 0;
