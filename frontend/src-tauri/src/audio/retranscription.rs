@@ -16,9 +16,11 @@ use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tempfile::TempDir;
 
 /// Global flag to track if retranscription is in progress
 static RETRANSCRIPTION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -54,6 +56,7 @@ impl Drop for RetranscriptionGuard {
 /// because the entire file is processed at once by VAD, and 400ms fragments
 /// speech at every natural sentence/topic pause (500ms-2s)
 const VAD_REDEMPTION_TIME_MS: u32 = 2000;
+const RETRANSCRIPTION_CHUNK_SECONDS: u32 = 5 * 60;
 
 /// Progress update emitted during retranscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,8 +178,283 @@ fn find_audio_file(folder: &Path) -> Result<PathBuf> {
     Err(anyhow!("No audio file found in: {}", folder.display()))
 }
 
-/// Internal function to run retranscription
+/// Create bounded temporary WAV chunks so retranscription never needs to hold
+/// the complete meeting in memory. The source recording is left untouched.
+fn prepare_audio_chunks(audio_path: &Path) -> Result<(Option<TempDir>, Vec<PathBuf>)> {
+    let Some(ffmpeg) = crate::audio::ffmpeg::find_ffmpeg_path() else {
+        warn!("FFmpeg unavailable; falling back to direct decode with memory guard");
+        return Ok((None, vec![audio_path.to_path_buf()]));
+    };
+
+    let temp_dir = tempfile::tempdir()?;
+    let pattern = temp_dir.path().join("chunk-%05d.wav");
+    let output = Command::new(&ffmpeg)
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-nostdin")
+        .arg("-i")
+        .arg(audio_path)
+        .arg("-map")
+        .arg("0:a:0")
+        .arg("-vn")
+        .arg("-ac")
+        .arg("1")
+        .arg("-ar")
+        .arg("16000")
+        .arg("-c:a")
+        .arg("pcm_s16le")
+        .arg("-f")
+        .arg("segment")
+        .arg("-segment_time")
+        .arg(RETRANSCRIPTION_CHUNK_SECONDS.to_string())
+        .arg("-reset_timestamps")
+        .arg("1")
+        .arg(&pattern)
+        .output()
+        .map_err(|e| anyhow!("启动音频分片失败: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("音频分片失败: {}", stderr.trim()));
+    }
+
+    let mut chunks: Vec<PathBuf> = std::fs::read_dir(temp_dir.path())?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wav"))
+        .collect();
+    chunks.sort();
+    if chunks.is_empty() {
+        return Err(anyhow!("音频分片为空，无法增强转写"));
+    }
+
+    info!(
+        "Prepared {} audio chunks ({} seconds each) for bounded retranscription",
+        chunks.len(), RETRANSCRIPTION_CHUNK_SECONDS
+    );
+    Ok((Some(temp_dir), chunks))
+}
+
+/// Internal entry point. Prefer bounded temporary chunks whenever FFmpeg is
+/// available; retain the guarded legacy path for installations without it.
 async fn run_retranscription<R: Runtime>(
+    app: AppHandle<R>,
+    meeting_id: String,
+    meeting_folder_path: String,
+    language: Option<String>,
+    model: Option<String>,
+    provider: Option<String>,
+) -> Result<RetranscriptionResult> {
+    let audio_path = find_audio_file(Path::new(&meeting_folder_path))?;
+    let (temp_dir, chunks) = prepare_audio_chunks(&audio_path)?;
+    if temp_dir.is_none() {
+        return run_retranscription_legacy(
+            app,
+            meeting_id,
+            meeting_folder_path,
+            language,
+            model,
+            provider,
+        )
+        .await;
+    }
+    run_retranscription_chunked(
+        app,
+        meeting_id,
+        meeting_folder_path,
+        language,
+        model,
+        provider,
+        chunks,
+        temp_dir,
+    )
+    .await
+}
+
+/// Process bounded WAV chunks sequentially. Only one chunk and its VAD
+/// segments are resident while the ASR engine is running.
+async fn run_retranscription_chunked<R: Runtime>(
+    app: AppHandle<R>,
+    meeting_id: String,
+    meeting_folder_path: String,
+    language: Option<String>,
+    model: Option<String>,
+    provider: Option<String>,
+    chunk_paths: Vec<PathBuf>,
+    _temp_dir: Option<TempDir>,
+) -> Result<RetranscriptionResult> {
+    let folder_path = PathBuf::from(&meeting_folder_path);
+    let audio_path = find_audio_file(&folder_path)?;
+    let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_rk_asr = is_rk_asr_provider(provider.as_deref());
+    let chunk_count = chunk_paths.len();
+
+    emit_progress(&app, &meeting_id, "decoding", 5, "正在自动分段音频…");
+
+    // Initialize the engine once; chunking only bounds audio buffers.
+    let _skip_vad_guard = use_rk_asr.then(rk_asr_provider::SkipVadGuard::enable);
+    let rk_engine = if use_rk_asr {
+        Some(RkAsrProvider::local().map_err(|error| anyhow!("RK ASR unavailable: {error}"))?)
+    } else {
+        None
+    };
+    let whisper_engine = if !use_parakeet && !use_rk_asr {
+        Some(get_or_init_whisper(&app, model.as_deref()).await?)
+    } else {
+        None
+    };
+    let parakeet_engine = if use_parakeet {
+        Some(get_or_init_parakeet(&app, model.as_deref()).await?)
+    } else {
+        None
+    };
+
+    const MAX_SEGMENT_SAMPLES: usize = 25 * 16000;
+    let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new();
+    let mut transcribed_count = 0usize;
+    let mut total_duration_seconds = 0.0f64;
+
+    for (chunk_index, chunk_path) in chunk_paths.iter().enumerate() {
+        if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
+            return Err(anyhow!("已取消增强转写"));
+        }
+        let chunk_base = chunk_index as f32 / chunk_count as f32;
+        emit_progress(
+            &app,
+            &meeting_id,
+            "decoding",
+            (5.0 + chunk_base * 10.0) as u32,
+            &format!("正在解码第 {} / {} 个音频分片…", chunk_index + 1, chunk_count),
+        );
+
+        let path_for_decode = chunk_path.clone();
+        let decoded = tokio::task::spawn_blocking(move || decode_audio_file(&path_for_decode))
+            .await
+            .map_err(|e| anyhow!("Decode task panicked: {}", e))??;
+        let chunk_duration_seconds = decoded.duration_seconds;
+        let chunk_offset_ms = total_duration_seconds * 1000.0;
+        let audio_samples = tokio::task::spawn_blocking(move || decoded.to_whisper_format())
+            .await
+            .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+        if audio_samples
+            .len()
+            .checked_mul(std::mem::size_of::<f32>())
+            .map_or(true, |bytes| bytes > MAX_DECODED_AUDIO_BYTES)
+        {
+            return Err(anyhow!("音频分片超过设备批处理上限 {} MiB", MAX_DECODED_AUDIO_BYTES / (1024 * 1024)));
+        }
+
+        let app_for_vad = app.clone();
+        let meeting_id_for_vad = meeting_id.clone();
+        let speech_segments = tokio::task::spawn_blocking(move || {
+            get_speech_chunks_with_progress(
+                &audio_samples,
+                VAD_REDEMPTION_TIME_MS,
+                |vad_progress, segments_found| {
+                    let progress = 15.0 + chunk_base * 10.0 + vad_progress as f32 * 0.1;
+                    emit_progress(
+                        &app_for_vad,
+                        &meeting_id_for_vad,
+                        "vad",
+                        progress as u32,
+                        &format!("正在检测第 {} 个分片… {}%（已找到 {} 段）", chunk_index + 1, vad_progress, segments_found),
+                    );
+                    !RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst)
+                },
+            )
+        })
+        .await
+        .map_err(|e| anyhow!("VAD task panicked: {}", e))??;
+        let mut speech_segments = speech_segments;
+        let file_duration_ms = chunk_duration_seconds * 1000.0;
+        speech_segments.retain(|seg| {
+            seg.end_timestamp_ms > seg.start_timestamp_ms
+                && seg.start_timestamp_ms >= 0.0
+                && seg.start_timestamp_ms < file_duration_ms + 250.0
+                && !seg.samples.is_empty()
+        });
+
+        let speech_bytes = speech_segments.iter().try_fold(0usize, |total, segment| {
+            total.checked_add(segment.samples.len().saturating_mul(std::mem::size_of::<f32>()))
+        });
+        if speech_bytes.map_or(true, |bytes| bytes > MAX_DECODED_AUDIO_BYTES) {
+            return Err(anyhow!("语音片段缓冲超过设备批处理上限 {} MiB", MAX_DECODED_AUDIO_BYTES / (1024 * 1024)));
+        }
+
+        let mut processable_segments = Vec::new();
+        for segment in speech_segments {
+            if segment.samples.len() > MAX_SEGMENT_SAMPLES {
+                processable_segments.extend(split_segment_at_silence(&segment, MAX_SEGMENT_SAMPLES));
+            } else {
+                processable_segments.push(segment);
+            }
+        }
+        let processable_count = processable_segments.len();
+        for (segment_index, segment) in processable_segments.iter().enumerate() {
+            if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
+                return Err(anyhow!("已取消增强转写"));
+            }
+            let overall = 25.0
+                + ((chunk_index as f32 + segment_index as f32 / processable_count.max(1) as f32)
+                    / chunk_count as f32)
+                    * 55.0;
+            emit_progress(&app, &meeting_id, "transcribing", overall as u32, &format!("正在转写第 {} / {} 个分片…", chunk_index + 1, chunk_count));
+            if segment.samples.len() < 1600 {
+                continue;
+            }
+            let (text, _confidence) = if use_rk_asr {
+                let mut samples = segment.samples.clone();
+                if samples.len() < 16_000 { samples.resize(16_000, 0.0); }
+                rk_asr_provider::set_chunk_start_ms((chunk_offset_ms + segment.start_timestamp_ms).round() as i64);
+                let result = rk_engine.as_ref().unwrap().transcribe(samples, language.clone()).await
+                    .map_err(|e| anyhow!("RK ASR transcription failed on segment {}: {}", segment_index, e))?;
+                (result.text, result.confidence.unwrap_or(0.9))
+            } else if use_parakeet {
+                let text = parakeet_engine.as_ref().unwrap().transcribe_audio(segment.samples.clone()).await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", segment_index, e))?;
+                (text, 0.9)
+            } else {
+                let (text, confidence, _) = whisper_engine.as_ref().unwrap()
+                    .transcribe_audio_with_confidence(segment.samples.clone(), language.clone()).await
+                    .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", segment_index, e))?;
+                (text, confidence)
+            };
+            if !text.trim().is_empty() {
+                all_transcripts.push((text, chunk_offset_ms + segment.start_timestamp_ms, chunk_offset_ms + segment.end_timestamp_ms));
+                transcribed_count += 1;
+            }
+        }
+        total_duration_seconds += chunk_duration_seconds;
+    }
+
+    if transcribed_count == 0 {
+        return Err(anyhow!("No speech detected in audio file"));
+    }
+    emit_progress(&app, &meeting_id, "saving", 80, "正在保存转写…");
+    let segments = create_transcript_segments(&all_transcripts);
+    let app_state = app.try_state::<AppState>().ok_or_else(|| anyhow!("App state not available"))?;
+    let pool = app_state.db_manager.pool();
+    let mut conn = pool.acquire().await.map_err(|e| anyhow!("DB error: {}", e))?;
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.map_err(|e| anyhow!("Failed to start transaction: {}", e))?;
+    sqlx::query("DELETE FROM transcripts WHERE meeting_id = ?").bind(&meeting_id).execute(&mut *tx).await.map_err(|e| anyhow!("Failed to delete existing transcripts: {}", e))?;
+    for segment in &segments {
+        sqlx::query("INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(&segment.id).bind(&meeting_id).bind(&segment.text).bind(&segment.timestamp)
+            .bind(segment.audio_start_time).bind(segment.audio_end_time).bind(segment.duration)
+            .execute(&mut *tx).await.map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;
+    }
+    tx.commit().await.map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
+    emit_progress(&app, &meeting_id, "saving", 90, "正在写入转写文件…");
+    if let Err(e) = write_transcripts_json(&folder_path, &segments) { warn!("Failed to write transcripts.json: {}", e); }
+    let audio_filename = audio_path.file_name().and_then(|n| n.to_str()).unwrap_or("audio.mp4").to_string();
+    if let Err(e) = write_retranscription_metadata(&folder_path, &meeting_id, total_duration_seconds, &audio_filename) { warn!("Failed to update metadata.json: {}", e); }
+    emit_progress(&app, &meeting_id, "complete", 100, "增强转写完成");
+    Ok(RetranscriptionResult { meeting_id, segments_count: segments.len(), duration_seconds: total_duration_seconds, language })
+}
+
+/// Legacy whole-file path used only when FFmpeg is unavailable.
+async fn run_retranscription_legacy<R: Runtime>(
     app: AppHandle<R>,
     meeting_id: String,
     meeting_folder_path: String,
