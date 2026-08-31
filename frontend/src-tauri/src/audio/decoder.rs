@@ -19,6 +19,12 @@ use symphonia::core::probe::Hint;
 use super::audio_processing::{audio_to_mono, resample, resample_audio};
 use super::ffmpeg::find_ffmpeg_path;
 
+// Keep batch retranscription from allocating the entire device memory. The
+// Electron process, ASR model and VAD buffers need headroom on 8 GiB boards.
+// This is an upper bound for the decoded interleaved f32 samples; callers get
+// a normal error and can split a long recording instead of triggering OOM.
+pub(crate) const MAX_DECODED_AUDIO_BYTES: usize = 512 * 1024 * 1024;
+
 /// Extensions requiring ffmpeg pre-conversion (Symphonia lacks these demuxers/codecs)
 const FFMPEG_ONLY_EXTENSIONS: &[&str] = &["mkv", "webm", "wma"];
 
@@ -505,6 +511,21 @@ pub fn decode_audio_file_with_progress(
         .map(|c| c.count() as u16)
         .unwrap_or(1);
 
+    let max_samples = MAX_DECODED_AUDIO_BYTES / std::mem::size_of::<f32>();
+    if let Some(frames) = track.codec_params.n_frames {
+        let expected_samples = frames
+            .checked_mul(channels as u64)
+            .ok_or_else(|| anyhow!("音频采样数超出可处理范围"))?;
+        if expected_samples > max_samples as u64 {
+            return Err(anyhow!(
+                "音频解码后需要 {:.1} GiB 内存，超过设备批处理上限 {} MiB；请先切分录音后再增强转写",
+                expected_samples as f64 * std::mem::size_of::<f32>() as f64
+                    / (1024.0 * 1024.0 * 1024.0),
+                MAX_DECODED_AUDIO_BYTES / (1024 * 1024)
+            ));
+        }
+    }
+
     debug!(
         "Audio track: {}Hz, {} channels (from metadata)",
         sample_rate, channels
@@ -516,7 +537,6 @@ pub fn decode_audio_file_with_progress(
         .map_err(|e| anyhow!("Failed to create decoder: {}", e))?;
 
     // Decode all packets
-    let mut all_samples: Vec<f32> = Vec::new();
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
 
     // Calculate expected samples for progress tracking
@@ -524,6 +544,9 @@ pub fn decode_audio_file_with_progress(
         .map(|frames| frames as f64 / sample_rate as f64);
     let expected_samples = expected_duration
         .map(|dur| (dur * sample_rate as f64 * channels as f64) as usize);
+
+    let initial_capacity = expected_samples.unwrap_or(0).min(max_samples);
+    let mut all_samples: Vec<f32> = Vec::with_capacity(initial_capacity);
 
     let mut last_progress = 0u32;
 
@@ -570,6 +593,12 @@ pub fn decode_audio_file_with_progress(
                 // Copy samples to buffer
                 if let Some(ref mut buf) = sample_buf {
                     buf.copy_interleaved_ref(decoded);
+                    if all_samples.len().saturating_add(buf.samples().len()) > max_samples {
+                        return Err(anyhow!(
+                            "音频解码后超过 {} MiB 内存上限；请先切分录音后再增强转写",
+                            MAX_DECODED_AUDIO_BYTES / (1024 * 1024)
+                        ));
+                    }
                     all_samples.extend_from_slice(buf.samples());
                 }
 

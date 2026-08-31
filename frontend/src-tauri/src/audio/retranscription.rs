@@ -1,6 +1,6 @@
 // Retranscription module - allows re-processing stored audio with different settings
 
-use crate::audio::decoder::decode_audio_file;
+use crate::audio::decoder::{decode_audio_file, MAX_DECODED_AUDIO_BYTES};
 use crate::audio::vad::get_speech_chunks_with_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
@@ -231,6 +231,16 @@ async fn run_retranscription<R: Runtime>(
     })
     .await
     .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+    if audio_samples
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .map_or(true, |bytes| bytes > MAX_DECODED_AUDIO_BYTES)
+    {
+        return Err(anyhow!(
+            "转换后的音频超过设备批处理上限 {} MiB；请先切分录音后再增强转写",
+            MAX_DECODED_AUDIO_BYTES / (1024 * 1024)
+        ));
+    }
     info!("Converted to 16kHz mono format: {} samples", audio_samples.len());
 
     emit_progress(&app, &meeting_id, "vad", 20, "正在检测语音片段…");
@@ -285,6 +295,17 @@ async fn run_retranscription<R: Runtime>(
             dropped - speech_segments.len(),
             duration_seconds
         );
+    }
+
+    let speech_samples_bytes = speech_segments.iter().try_fold(0usize, |total, segment| {
+        total
+            .checked_add(segment.samples.len().saturating_mul(std::mem::size_of::<f32>()))
+    });
+    if speech_samples_bytes.map_or(true, |bytes| bytes > MAX_DECODED_AUDIO_BYTES) {
+        return Err(anyhow!(
+            "语音片段缓冲超过设备批处理上限 {} MiB；请缩短录音后再增强转写",
+            MAX_DECODED_AUDIO_BYTES / (1024 * 1024)
+        ));
     }
 
     let total_segments = speech_segments.len();
@@ -353,7 +374,9 @@ async fn run_retranscription<R: Runtime>(
     const MAX_SEGMENT_SAMPLES: usize = 25 * 16000; // 25 seconds at 16kHz
 
     let mut processable_segments: Vec<crate::audio::vad::SpeechSegment> = Vec::new();
-    for segment in &speech_segments {
+    // Consume the VAD output instead of cloning every segment. Keeping both
+    // collections doubles the audio peak just before the ASR model loads.
+    for segment in speech_segments {
         if segment.samples.len() > MAX_SEGMENT_SAMPLES {
             debug!(
                 "Splitting large segment ({:.0}ms, {} samples) at silence boundaries",
@@ -361,11 +384,11 @@ async fn run_retranscription<R: Runtime>(
                 segment.samples.len()
             );
 
-            let sub_segments = split_segment_at_silence(segment, MAX_SEGMENT_SAMPLES);
+            let sub_segments = split_segment_at_silence(&segment, MAX_SEGMENT_SAMPLES);
             debug!("Split into {} sub-segments", sub_segments.len());
             processable_segments.extend(sub_segments);
         } else {
-            processable_segments.push(segment.clone());
+            processable_segments.push(segment);
         }
     }
 
