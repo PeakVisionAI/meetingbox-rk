@@ -39,6 +39,8 @@ docs/                      构建、架构、RK 部署和交付说明
 backend/                   历史 FastAPI/Whisper 归档，不是当前生产入口
 ```
 
+面向新设备的完整安装步骤、许可证、自启动和验收清单见 [HYOS 部署手册](docs/DEPLOYMENT.md)。部署时请将仓库中的桌面应用与设备侧 RK 推理服务、模型和 systemd unit 文件分开管理。
+
 ## 开发环境
 
 建议在目标 Ubuntu/aarch64 设备或等效 Linux 环境构建正式包。开发前准备：
@@ -48,7 +50,7 @@ backend/                   历史 FastAPI/Whisper 归档，不是当前生产入
 - Tauri 2 所需的 WebKitGTK、GTK、AppIndicator 等系统依赖
 - 目标设备对应的音频、显示和 Rockchip 驱动
 
-完整系统依赖请参考 [Linux 构建说明](docs/building_in_linux.md) 和 [通用构建说明](docs/BUILDING.md)。
+完整系统依赖请参考 [HYOS 部署手册](docs/DEPLOYMENT.md)、[Linux 构建说明](docs/building_in_linux.md) 和 [通用构建说明](docs/BUILDING.md)。
 
 安装前端依赖：
 
