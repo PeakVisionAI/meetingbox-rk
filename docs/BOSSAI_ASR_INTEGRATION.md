@@ -14,7 +14,7 @@
 
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
-| `MEETINGBOX_ASR_BACKEND` | `rk` | `rk` 使用现有 RK 服务；`bossai` 使用 FunASR 文件接口；其他值返回配置错误 |
+| `MEETINGBOX_ASR_BACKEND` | `rk` | `rk` 使用现有 RK 服务；`bossai` 使用 FunASR 文件接口；`rk-npu` 启用严格 NPU 优先策略 |
 | `MEETINGBOX_BOSSAI_ASR_URL` | `http://127.0.0.1:8002` | BossAI sidecar 根地址；允许 HTTP(S)，禁止 URL 中嵌入凭据、query 或 fragment |
 
 仍在应用设置中选择 **RK ASR**。该选项是现有设备侧服务入口，环境变量指定其实际后端；本次不增加界面选项或数据库迁移。启动日志会记录实际使用的 `BossAI FunASR`。环境变量需在启动 Tauri 进程前设置，修改后重启应用；本项目不自动加载 `.env`。
@@ -90,6 +90,8 @@ curl --fail http://127.0.0.1:8002/asr/transcribe-file \
 健康检查通过不代表真实模型识别质量或会议链路通过。
 
 ## RK3588 与说话人限制
+
+新增的可选 `rk-npu` 策略支持 SenseVoice RKNN 优先、BossAI CPU 显式回退和实际后端状态查询；配置与新增的服务元数据契约见 [RK NPU 适配](RK_NPU_ADAPTATION.md)。该策略调用外部 RK 服务，不把本节所述的 FunASR CPU 模型直接转换为 NPU。
 
 BossAI 当前服务使用 FunASR/PyTorch CPU，不能直接获得 RK3588 NPU 加速。原 RKNN 服务仍是默认路径。BossAI 的 ARM64 文档有模型级运行记录，也有整套回放因内存/Swap 压力未完成的记录；本适配不把它当作 meetingbox 在 RK3588 上的端到端通过证据。
 

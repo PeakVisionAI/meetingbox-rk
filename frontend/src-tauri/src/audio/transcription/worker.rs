@@ -586,7 +586,14 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
             // NEW: Trait-based provider (clean, unified interface)
             let language = crate::get_language_preference_internal();
 
-            match provider.transcribe(speech_samples, language).await {
+            let result = provider.transcribe(speech_samples, language).await;
+            if let Some(status) = super::rk_policy::runtime_status() {
+                if let Some(reason) = status.fallback_reason.as_deref() {
+                    let _ = app.emit("transcription-warning", format!("已回退到 CPU 识别：{}", reason));
+                }
+                let _ = app.emit("asr-backend-status", &status);
+            }
+            match result {
                 Ok(result) => {
                     let cleaned_text = result.text.trim().to_string();
                     if cleaned_text.is_empty() {

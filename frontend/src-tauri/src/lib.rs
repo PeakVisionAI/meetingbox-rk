@@ -565,6 +565,7 @@ pub fn run() {
             analytics::commands::track_analytics_enabled,
             analytics::commands::track_analytics_disabled,
             analytics::commands::track_analytics_transparency_viewed,
+            audio::transcription::engine::get_asr_runtime_status,
             whisper_engine::commands::whisper_init,
             whisper_engine::commands::whisper_get_available_models,
             whisper_engine::commands::whisper_load_model,
