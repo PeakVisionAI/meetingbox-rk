@@ -26,6 +26,8 @@ Rust / Tauri desktop core
         └─ 分时摘要与最终会议纪要
 ```
 
+可通过可选的 BossAI FunASR 适配复用本地语音服务，覆盖实时语音片段、音频导入和重新转写；配置、组件边界及验证要求见 [BossAI-ASR 复用说明](docs/BOSSAI_ASR_INTEGRATION.md)。
+
 RK 设备上的推理服务由部署配置决定。当前验收基线覆盖 RK3588 ASR、说话人处理和 RK1828 摘要服务，详见 [RK 部署与验收基线](docs/RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md)。
 
 ## 仓库结构

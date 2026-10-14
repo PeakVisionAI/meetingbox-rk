@@ -118,6 +118,7 @@ struct FinalizeResponse {
 pub struct RkAsrProvider {
     endpoint: String,
     client: reqwest::Client,
+    bossai: Option<super::bossai_provider::BossAiProvider>,
 }
 
 impl RkAsrProvider {
@@ -131,11 +132,29 @@ impl RkAsrProvider {
         Ok(Self {
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
             client,
+            bossai: None,
         })
     }
 
     pub fn local() -> Result<Self, TranscriptionError> {
-        Self::new(RK_ASR_ENDPOINT)
+        let backend = std::env::var("MEETINGBOX_ASR_BACKEND").unwrap_or_else(|_| "rk".to_string());
+        Self::configured(&backend, std::env::var("MEETINGBOX_BOSSAI_ASR_URL").ok().as_deref())
+    }
+
+    fn configured(backend: &str, endpoint: Option<&str>) -> Result<Self, TranscriptionError> {
+        let mut provider = Self::new(RK_ASR_ENDPOINT)?;
+        match backend {
+            "rk" => {}
+            "bossai" => {
+                provider.bossai = Some(super::bossai_provider::BossAiProvider::new(
+                    endpoint.unwrap_or(super::bossai_provider::BOSSAI_ASR_ENDPOINT),
+                )?);
+            }
+            _ => return Err(TranscriptionError::EngineFailed(
+                "MEETINGBOX_ASR_BACKEND must be 'rk' or 'bossai'".to_string(),
+            )),
+        }
+        Ok(provider)
     }
 
     pub async fn finalize_current_meeting(
@@ -143,7 +162,9 @@ impl RkAsrProvider {
     ) -> Result<SpeakerCalibrationResult, TranscriptionError> {
         let meeting_id = CURRENT_MEETING_ID.swap(0, Ordering::SeqCst);
         CURRENT_CHUNK_START_MS.store(0, Ordering::SeqCst);
-        if meeting_id <= 0 {
+        if meeting_id <= 0 || self.bossai.is_some() {
+            // BossAI's file endpoint has no meeting-wide speaker finalization.
+            // Preserve live transcript timestamps and do not call the RK API.
             return Ok(SpeakerCalibrationResult::default());
         }
 
@@ -207,6 +228,9 @@ impl RkAsrProvider {
     }
 
     pub async fn check_ready(&self) -> Result<bool, TranscriptionError> {
+        if let Some(provider) = &self.bossai {
+            return provider.check_ready().await;
+        }
         let response = self
             .client
             .get(format!("{}/healthz", self.endpoint))
@@ -234,8 +258,13 @@ impl TranscriptionProvider for RkAsrProvider {
     async fn transcribe(
         &self,
         audio: Vec<f32>,
-        _language: Option<String>,
+        language: Option<String>,
     ) -> Result<TranscriptResult, TranscriptionError> {
+        if let Some(provider) = &self.bossai {
+            let mut result = provider.transcribe(audio, language).await?;
+            result.text = apply_hotword_corrections(result.text);
+            return Ok(result);
+        }
         if audio.len() < MINIMUM_SAMPLES {
             return Err(TranscriptionError::AudioTooShort {
                 samples: audio.len(),
@@ -322,11 +351,17 @@ impl TranscriptionProvider for RkAsrProvider {
     }
 
     async fn get_current_model(&self) -> Option<String> {
+        if let Some(provider) = &self.bossai {
+            return provider.get_current_model().await;
+        }
         self.is_model_loaded().await.then(|| RK_ASR_MODEL.to_string())
     }
 
     fn provider_name(&self) -> &'static str {
-        "RK ASR"
+        match &self.bossai {
+            Some(provider) => provider.provider_name(),
+            None => "RK ASR",
+        }
     }
 }
 
@@ -487,7 +522,7 @@ fn sanitize_asr_detail(detail: &str) -> String {
         .collect()
 }
 
-fn encode_pcm16_wav(audio: &[f32]) -> Vec<u8> {
+pub(super) fn encode_pcm16_wav(audio: &[f32]) -> Vec<u8> {
     let data_len = (audio.len() * std::mem::size_of::<i16>()) as u32;
     let mut wav = Vec::with_capacity(44 + data_len as usize);
     wav.extend_from_slice(b"RIFF");
@@ -513,6 +548,27 @@ fn encode_pcm16_wav(audio: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_backend_selection_preserves_rk_default() {
+        assert_eq!(RkAsrProvider::configured("rk", None).unwrap().provider_name(), "RK ASR");
+        assert_eq!(RkAsrProvider::configured("bossai", None).unwrap().provider_name(), "BossAI FunASR");
+        assert!(RkAsrProvider::configured("unknown", None).is_err());
+        assert!(RkAsrProvider::configured("bossai", Some("bad url")).is_err());
+    }
+
+    #[tokio::test]
+    async fn bossai_finalization_clears_session_without_rk_request() {
+        let _guard = SESSION_TEST_LOCK.lock().unwrap();
+        CURRENT_MEETING_ID.store(42, Ordering::SeqCst);
+        CURRENT_CHUNK_START_MS.store(1000, Ordering::SeqCst);
+        let provider = RkAsrProvider::configured("bossai", None).unwrap();
+        let result = provider.finalize_current_meeting().await.unwrap();
+        assert!(!result.finalized);
+        assert!(result.segments.is_empty());
+        assert_eq!(CURRENT_MEETING_ID.load(Ordering::SeqCst), 0);
+        assert_eq!(CURRENT_CHUNK_START_MS.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn wav_encoder_emits_16khz_mono_pcm16() {
@@ -548,8 +604,11 @@ mod tests {
         );
     }
 
+    static SESSION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn meeting_session_id_is_positive() {
+        let _guard = SESSION_TEST_LOCK.lock().unwrap();
         let meeting_id = begin_meeting_session();
         assert!(meeting_id > 0);
         assert_eq!(current_meeting_id(), meeting_id);
@@ -568,6 +627,7 @@ mod tests {
 
     #[test]
     fn skip_vad_guard_resets_on_drop() {
+        let _guard = SESSION_TEST_LOCK.lock().unwrap();
         set_skip_vad(false);
         {
             let _guard = SkipVadGuard::enable();
@@ -587,7 +647,8 @@ mod tests {
     fn prepare_asr_audio_raises_quiet_peak() {
         let prepared = prepare_asr_audio(&[0.05, -0.04, 0.03]);
         let peak = prepared.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(peak > 0.7);
+        // The configured gain cap is 12x: a 0.05 peak becomes 0.6.
+        assert!((peak - 0.6).abs() < 1e-6);
         assert!(prepared.len() > 3);
     }
 
