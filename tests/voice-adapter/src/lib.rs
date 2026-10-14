@@ -5,6 +5,8 @@
 mod provider;
 #[path = "../../../frontend/src-tauri/src/audio/transcription/rk_asr_provider.rs"]
 mod rk_asr_provider;
+#[path = "../../../frontend/src-tauri/src/audio/transcription/rk_policy.rs"]
+mod rk_policy;
 #[path = "../../../frontend/src-tauri/src/audio/transcription/bossai_provider.rs"]
 mod bossai_provider;
 #[path = "../../../frontend/src-tauri/src/audio/transcription/task.rs"]

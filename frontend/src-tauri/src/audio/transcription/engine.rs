@@ -7,6 +7,11 @@ use log::{info, warn};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 
+#[tauri::command]
+pub fn get_asr_runtime_status() -> Option<super::rk_policy::AsrRuntimeStatus> {
+    super::rk_policy::runtime_status()
+}
+
 fn rk_transcript_config() -> crate::api::api::TranscriptConfig {
     crate::api::api::TranscriptConfig {
         provider: crate::database::repositories::setting::RK_TRANSCRIPT_PROVIDER.to_string(),

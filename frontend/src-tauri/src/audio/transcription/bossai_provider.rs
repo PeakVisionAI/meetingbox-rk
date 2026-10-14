@@ -14,6 +14,8 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 struct HealthResponse {
     ok: bool,
     backend: String,
+    #[serde(default)]
+    device: Option<String>,
     #[serde(default, rename = "fileLoaded")]
     file_loaded: bool,
 }
@@ -63,6 +65,14 @@ impl BossAiProvider {
     }
 
     pub async fn check_ready(&self) -> Result<bool, TranscriptionError> {
+        self.check_health(false).await
+    }
+
+    pub async fn check_cpu_ready(&self) -> Result<bool, TranscriptionError> {
+        self.check_health(true).await
+    }
+
+    async fn check_health(&self, require_cpu: bool) -> Result<bool, TranscriptionError> {
         let response = self
             .client
             .get(format!("{}/health", self.endpoint))
@@ -72,7 +82,10 @@ impl BossAiProvider {
             .map_err(transport_error)?;
         let health: HealthResponse = read_response(response).await?;
         // /health can be OK while only the streaming model is loaded.
-        Ok(health.ok && health.backend == "funasr" && health.file_loaded)
+        Ok(health.ok
+            && health.backend == "funasr"
+            && health.file_loaded
+            && (!require_cpu || health.device.as_deref() == Some("cpu")))
     }
 }
 
