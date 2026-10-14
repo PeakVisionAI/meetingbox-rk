@@ -85,6 +85,19 @@ struct TranscriptionStatus {
 }
 
 #[tauri::command]
+fn get_voice_wake_status() -> audio::wake_listener::VoiceWakeStatus {
+    audio::wake_listener::status()
+}
+
+#[tauri::command]
+async fn set_voice_wake_enabled<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: bool,
+) -> audio::wake_listener::VoiceWakeStatus {
+    audio::wake_listener::set_enabled(&app, enabled).await
+}
+
+#[tauri::command]
 async fn start_recording<R: Runtime>(
     app: AppHandle<R>,
     mic_device_name: Option<String>,
@@ -518,6 +531,7 @@ pub fn run() {
                 log::warn!("Failed to resolve resource directory for templates");
             }
 
+            audio::wake_listener::start(_app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -535,6 +549,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             start_recording,
             stop_recording,
+            get_voice_wake_status,
+            set_voice_wake_enabled,
             is_recording,
             system_power::system_power_action,
             get_transcription_status,
@@ -802,6 +818,7 @@ pub fn run() {
                 tauri::RunEvent::Exit => {
                     log::info!("Application exiting, cleaning up resources...");
                     tauri::async_runtime::block_on(async {
+                        audio::wake_listener::shutdown().await;
                         // Clean up database connection and checkpoint WAL
                         if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
                             log::info!("Starting database cleanup...");

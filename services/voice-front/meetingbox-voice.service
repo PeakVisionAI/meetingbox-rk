@@ -1,0 +1,26 @@
+[Unit]
+Description=Meetingbox BossAI wake-word KWS and VAD
+After=network.target asr.service
+Wants=asr.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/meetingbox-voice-0.4.2/voice-front
+Environment=PYTHONNOUSERSITE=1
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=BOSSAI_VOICE_FRONT_MODEL_DIR=/home/ubuntu/meetingbox-voice-0.4.2/models/front
+Environment=MEETINGBOX_RK_ASR_URL=http://127.0.0.1:8020
+ExecStart=/home/ubuntu/meetingbox-voice-0.4.2/env/bin/python /home/ubuntu/meetingbox-voice-0.4.2/voice-front/server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/ubuntu/meetingbox-voice-0.4.2
+
+[Install]
+WantedBy=multi-user.target
