@@ -200,7 +200,7 @@ X-GNOME-Autostart-enabled=true
 EOF
 ~~~
 
-tauri.conf.json 已配置启动窗口全屏。若 Debian 包安装后的可执行文件路径不同，用以下命令确认并修改 Exec：
+Linux 的 tauri.linux.conf.json 已配置普通最大化窗口启动，程序保留 GTK/WebKit 的默认渲染选择。旧版强制 GLES/EGL、WebKit 合成模式和禁用 DMA-BUF 的设置在当前 RK3588/WebKit 2.50 环境会导致首帧停滞、输入不可见。不要通过 X11 unmap/map 绕过 GTK 窗口生命周期；升级后应实际验证输入、删除及窗口恢复时画面同步更新。若 Debian 包安装后的可执行文件路径不同，用以下命令确认并修改 Exec：
 
 ~~~bash
 command -v meetily
