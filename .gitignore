@@ -80,3 +80,8 @@ experiments/
 target/
 
 frontend/src-tauri/binaries/
+
+# Local RKNN deployment assets
+/services/rk-asr/libmeetingbox_rknn.so
+__pycache__/
+*.pyc

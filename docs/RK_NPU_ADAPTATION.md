@@ -4,7 +4,7 @@
 
 meetingbox 已有设备侧 RK HTTP 客户端；本次增加严格的 `rk-npu` 路由策略，优先请求 SenseVoice RKNN，故障时可显式选择 BossAI FunASR CPU 回退。实时语音片段、导入和重新转写复用同一入口。原有 `rk` 和 `bossai` 模式保持兼容，不自动替换默认部署。
 
-这是外部推理服务的客户端适配，不包含 RKNN 模型转换、权重、RKNN runtime 或推理服务端。当前工作区未找到对应服务包、权重和目标机连接资料；现有文档中的 SenseVoice RKNN 运行记录是 2026-08-12 的历史记录。本次不能证明当前设备的 NPU 已运行。
+现已补齐独立 [RKNN ASR 服务与部署工具](../services/rk-asr/README.md)：使用固定版本 sherpa-onnx 原生 RKNN provider，提供 RK3588 30 秒 SenseVoice 模型、runtime、头文件与许可证的下载校验清单、C 桥接、systemd unit 和硬件证据采集工具。第三方二进制需在目标机显式下载，本仓库不再分发权重或 runtime。目标机连接资料尚未提供；现有文档中的 SenseVoice RKNN 运行记录是 2026-08-12 的历史记录，当前新增服务尚未完成实机链接、模型推理或 NPU 验收。
 
 ## 配置
 
@@ -75,7 +75,7 @@ HTTP 200 并不表示 NPU 执行成功。服务如果内部回退到 Paraformer 
 
 ## 部署检查与硬件验收
 
-先取得外部 RK 服务及匹配的 `.rknn` 权重、词表/前处理资产、模型许可证、SHA-256、runtime 和驱动版本。按现有部署手册安装服务；本仓库不提供缺失的服务实现或权重，也不通过新增 unit 伪造已安装状态。
+可按 [服务部署说明](../services/rk-asr/README.md) 准备本仓库新增服务，或继续使用已验收的外部 RK 服务。新增工具从固定上游获取 `.rknn`、词表、runtime 和许可证并校验 SHA-256；驱动仍由目标设备镜像提供，须核对 runtime 兼容性。提供的 systemd unit 是待安装模板，不代表目标机已运行。新增服务明确不支持说话人校准，停止时保留已有逐字稿并报告限制。
 
 只检查健康协议：
 
