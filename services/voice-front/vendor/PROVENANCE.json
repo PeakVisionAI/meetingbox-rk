@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/PeakVisionAI/BossAI-ASR",
+  "revision": "3fd94abdd7fa5961a5103805b08d773525113bd0",
+  "source": "asr_server/voice_front",
+  "files": {
+    "wakeword_config.py": "11e5785d00d65b904cfbe9fd1b7cb133b18fdd66758616dc8e98e89196758c04",
+    "service.py": "8883f62707db69eb213ed3fd5120c8b365500b6b10c3e54a2755f9239ad42404",
+    "kws.py": "276005c403b7dd8d2795a7924a2c931a55caa55f1609209c26be43aea8bc8835",
+    "wakeword.py": "3d577c43f9ccc917eb02cf10686cf8074bc5acf6b97d656072fb950a757304f5",
+    "session.py": "fb137c639663e209269b09baeec2b40985c4bfcd04c690ee021b235368d8d19c",
+    "__init__.py": "31bb54e7fab1f67240f1f3cb1d38adff93ea23c3a187e03d0fa614370366978b",
+    "addressee.py": "beae6587caf781224e80444a2b94fe2fdb15dac45a19b8316aa6c8c703f292e7",
+    "settings.py": "063d1017f95db61a260dcba182ebf6e4933c5d9b875d9f035565f38292752c28",
+    "router.py": "18d7eba2cde0af55c9a95fca4dc778b1b9764b71b4e88628e6273763be5ecf26",
+    "streaming.py": "7f4e70955a7b0e80e12cb219b47159f9efd0c0cc2388948da1777a7465179bc4",
+    "vad.py": "500d9d31ef82c0b86ebb89c107fd5dbd1389b1ba4b82267a3642c8af0960d874"
+  },
+  "note": "Unmodified source reused for the authorized meetingbox adaptation. Upstream checkout does not supply a root source license; no additional license is asserted."
+}

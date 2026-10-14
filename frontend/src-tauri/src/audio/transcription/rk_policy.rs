@@ -103,6 +103,11 @@ pub fn runtime_status() -> Option<AsrRuntimeStatus> {
 
 static OPERATION_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// Recording, import and retranscription share this operation ownership.
+pub fn operation_active() -> bool {
+    OPERATION_ACTIVE.load(Ordering::SeqCst)
+}
+
 pub struct AsrOperationGuard;
 
 impl AsrOperationGuard {

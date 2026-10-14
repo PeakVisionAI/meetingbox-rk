@@ -21,6 +21,8 @@ pub mod pipeline;
 pub mod stream;
 pub mod recording_manager;
 pub mod recording_commands;
+pub mod wake_listener;
+pub(crate) mod wake_policy;
 pub mod recording_preferences;
 pub mod recording_saver;
 pub mod incremental_saver;  // NEW: Incremental audio saving with checkpoints

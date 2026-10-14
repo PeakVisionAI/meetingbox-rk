@@ -11,3 +11,5 @@ mod rk_policy;
 mod bossai_provider;
 #[path = "../../../frontend/src-tauri/src/audio/transcription/task.rs"]
 mod task;
+#[path = "../../../frontend/src-tauri/src/audio/wake_policy.rs"]
+mod wake_policy;

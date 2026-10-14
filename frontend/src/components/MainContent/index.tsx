@@ -4,7 +4,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePathname, useRouter } from 'next/navigation';
 import { Settings, Play, Power, RotateCcw } from 'lucide-react';
-import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { RecordingStatus, useRecordingState } from '@/contexts/RecordingStateContext';
+import { useVoiceWake } from '@/hooks/useVoiceWake';
+import { VoiceWakeControl } from './VoiceWakeControl';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
@@ -22,7 +24,8 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   const recordingState = useRecordingState();
   const isHome = pathname === '/';
   const isSettings = pathname === '/settings';
-  const recordingActive = recordingState.isRecording || recordingState.isStopping || recordingState.isProcessing || recordingState.isSaving;
+  const recordingActive = recordingState.status === RecordingStatus.STARTING || recordingState.isRecording || recordingState.isStopping || recordingState.isProcessing || recordingState.isSaving;
+  const voiceWake = useVoiceWake(recordingActive);
   const recordingActiveRef = useRef(recordingActive);
   const [powerMenuOpen, setPowerMenuOpen] = useState(false);
   const [pendingPowerAction, setPendingPowerAction] = useState<PowerAction | null>(null);
@@ -66,6 +69,7 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
     const setup = async () => {
       try {
         const stop = await listen('request-start-recording', () => {
+          if (cancelled) return;
           if (recordingActiveRef.current) {
             sessionStorage.removeItem('autoStartRecording');
             if (!isHomeRef.current) router.push('/');
@@ -76,6 +80,7 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
             window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
             return;
           }
+          if (sessionStorage.getItem('autoStartRecording') === 'true') return;
           sessionStorage.setItem('autoStartRecording', 'true');
           router.push('/');
         });
@@ -103,6 +108,7 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
           <span>AI智能会议助手</span>
         </button>
         <div className={`hyos-topbar-actions${isHome && !recordingActive ? ' hyos-home-topbar-actions' : ''}`}>
+          {!recordingActive && <VoiceWakeControl {...voiceWake} />}
           {recordingActive && !isHome && (
             <div className="hyos-recording-actions">
               <button onClick={() => router.push('/')}>
