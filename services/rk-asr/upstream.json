@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "sherpa_onnx_version": "1.13.8",
+  "sherpa_onnx_commit": "11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf",
+  "model_id": "SenseVoiceSmall-rk3588-30-seconds-2024-07-17",
+  "target": "rk3588",
+  "sources": {
+    "model": {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-rk3588-30-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+      "bytes": 419498837,
+      "sha256": "9621a174f75d5c8adc6064ba188d7a0ddb42a6e5dee695a1d6dd57dd1844ad67",
+      "archive": true
+    },
+    "sherpa": {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-rknn-linux-aarch64-shared.tar.bz2",
+      "bytes": 28250944,
+      "sha256": "6fa85c2615feb5d3e501cbeee00f6f321720164ea50239683e7c37a3baea8353",
+      "archive": true
+    },
+    "header": {
+      "url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/sherpa-onnx/c-api/c-api.h",
+      "bytes": 167657,
+      "sha256": "2a1b95084be8fd1deb3228fcad2fd3f7f0258b64582f7402281ec174c7b7f4ce",
+      "path": "include/sherpa-onnx/c-api/c-api.h"
+    },
+    "rknnrt": {
+      "url": "https://raw.githubusercontent.com/airockchip/rknn-toolkit2/7efa763d1da04c4c4447fa5632dc2d9c94fb3063/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so",
+      "bytes": 7192616,
+      "sha256": "1170e5f99f2db7ed4d3a4c2bdbed941b7363bd090e0c28b4e210f40614327911",
+      "path": "lib/librknnrt.so"
+    },
+    "sherpa_license": {
+      "url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/LICENSE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "path": "licenses/sherpa-onnx-LICENSE"
+    },
+    "model_license": {
+      "url": "https://raw.githubusercontent.com/modelscope/FunASR/f793eae5778eae93854646f9b4b9c42a23584651/MODEL_LICENSE",
+      "bytes": 5306,
+      "sha256": "7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8",
+      "path": "licenses/FunASR-MODEL_LICENSE"
+    },
+    "rknn_license": {
+      "url": "https://raw.githubusercontent.com/airockchip/rknn-toolkit2/7efa763d1da04c4c4447fa5632dc2d9c94fb3063/LICENSE",
+      "bytes": 1301,
+      "sha256": "d846f57d942c7dfdca7b8b54f9e8bb39e1e226790dc4f5ee205d6fd678961720",
+      "path": "licenses/Rockchip-LICENSE"
+    }
+  },
+  "licenses": {
+    "sherpa_code": "https://github.com/k2-fsa/sherpa-onnx/blob/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/LICENSE",
+    "sensevoice_model": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
+    "original_model": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall"
+  }
+}
