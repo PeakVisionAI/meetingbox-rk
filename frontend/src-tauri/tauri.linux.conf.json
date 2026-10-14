@@ -1,3 +1,20 @@
 {
-  "productName": "meetingbox"
+  "productName": "meetingbox",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "HYOS",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1180,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "maximized": true,
+        "theme": "Light",
+        "decorations": true
+      }
+    ]
+  }
 }
