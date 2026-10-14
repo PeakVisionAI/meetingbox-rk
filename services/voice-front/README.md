@@ -30,3 +30,5 @@ HTTP 仅监听 `127.0.0.1:8021`，沿用 `/voice/health`、`/voice/feed` 和 `/v
 启动桌面时设置 `MEETINGBOX_WAKE_ENABLED=1`、`MEETINGBOX_VOICE_URL=http://127.0.0.1:8021`。`MEETINGBOX_WAKE_SOURCE` 可指定 PulseAudio 的物理麦克风 source。系统需安装 `parec`（Ubuntu 的 pulseaudio-utils）。桌面管理采集子进程，录音开始前关闭并等待其退出；禁用、失败、退出时也释放采集。待机音频不会落盘。界面可以关闭监听，状态会区分待机、等待指令、录音暂停和服务故障。
 
 服务与桌面分别自启。仅服务自启不会采集麦克风；桌面启用监听后才创建采集进程。默认未配置环境变量的安装不启用监听。
+
+RK3588 的 X11/WebKit 初始全屏表面可能停留在首帧，内部 DOM 和 IPC 已正常运行但屏幕仍显示加载页。`desktop-launch.py` 使用 xdotool，仅针对自身子进程的 HYOS 主窗口在启动后延迟 12 秒 unmap/map 以触发重绘；窗口恢复为普通窗口。盒子启动脚本已采用该兼容入口，不改动登录认证。其他显示栈不必使用此入口。
