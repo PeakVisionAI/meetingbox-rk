@@ -12,7 +12,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tokio::task::JoinHandle;
+use super::transcription::task::TranscriptionTask;
 
 use super::{
     parse_audio_device,
@@ -42,7 +42,7 @@ static IS_RECORDING: AtomicBool = AtomicBool::new(false);
 
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
-static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+static TRANSCRIPTION_TASK: Mutex<Option<TranscriptionTask>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
@@ -573,14 +573,14 @@ pub async fn stop_recording<R: Runtime>(
         }),
     );
 
-    // Wait for transcription task with enhanced progress monitoring (NO TIMEOUT - we must process all chunks)
+    // Drain pending transcription within the shutdown deadline, then cancel and join.
     let transcription_task = {
         let mut global_task = TRANSCRIPTION_TASK.lock().unwrap();
         global_task.take()
     };
 
     if let Some(task_handle) = transcription_task {
-        info!("⏳ Waiting for ALL transcription chunks to be processed (no timeout - preserving every chunk)");
+        info!("⏳ Waiting up to 45 seconds for pending transcription chunks");
 
         // Enhanced progress monitoring during shutdown
         let progress_app = app.clone();
@@ -606,20 +606,18 @@ pub async fn stop_recording<R: Runtime>(
         });
 
         // Wait for remaining chunks, but do not freeze the UI if ASR is stuck.
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(45),
-            task_handle
-        ).await {
-            Ok(Ok(())) => {
+        match task_handle.finish(tokio::time::Duration::from_secs(45)).await {
+            Ok(true) => {
                 info!("✅ ALL transcription chunks processed successfully - no data lost");
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 warn!("⚠️ Transcription task completed with error: {:?}", e);
                 // Continue anyway - the worker may have processed most chunks
             }
-            Err(_) => {
-                warn!("⏱️ Transcription timeout reached, continuing shutdown");
-                // Continue shutdown even on timeout - better to lose some chunks than hang forever
+            Ok(false) => {
+                warn!("⏱️ Transcription timeout reached; workers cancelled and joined");
+                let _ = app.emit("transcription-warning",
+                    "转写等待超时，剩余片段已停止处理，可使用原始录音重新转写");
             }
         }
 
