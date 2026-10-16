@@ -31,4 +31,8 @@ HTTP 仅监听 `127.0.0.1:8021`，沿用 `/voice/health`、`/voice/feed` 和 `/v
 
 服务与桌面分别自启。仅服务自启不会采集麦克风；桌面启用监听后才创建采集进程。默认未配置环境变量的安装不启用监听。
 
-Linux 配置以普通最大化窗口启动，并保留 GTK/WebKit 的默认渲染选择。应用不再强制 GLES、EGL、WebKit 合成模式或禁用 DMA-BUF；这些旧设置在盒子当前 WebKit 2.50 上会导致屏幕停留在旧帧，使已经收到的输入不可见。`desktop-launch.py` 仅设置 ASR/唤醒环境变量并管理桌面子进程，不直接 unmap/map X11 窗口。盒子启动脚本使用该入口。部署后应验证屏幕密码圆点随键盘输入和删除更新，以及最小化、关闭到托盘后恢复输入；仅确认 DOM 数值变化不足以证明显示正常。
+Linux 配置强制全屏启动。`desktop-launch.py` 设置 ASR/唤醒环境变量并管理桌面子进程；在设备树标识为 RK3588、存在 X11 `DISPLAY` 且没有 `WAYLAND_DISPLAY` 时，额外默认设置 `WEBKIT_DISABLE_DMABUF_RENDERER=1`。2026-10-15 在盒子 WebKitGTK 2.50.4 / Mali-G610 上目视对照确认：默认 DMA-BUF 路径在点击后出现大面积黑影，单独禁用后消失，再恢复默认并重启后复现。GTK 动画窗口无残影。该兼容设置独立于已部署的 Xorg 同步修复，不强制 GLES、EGL 或 WebKit 合成模式，也不直接 unmap/map X11 窗口。
+
+盒子自启动和桌面菜单入口应统一指向 `~/.local/bin/meetingbox-wake`，由其调用此脚本；直接运行 `meetily` 会绕过设置。后续重新部署 `voice-front` 时应包含更新后的 `desktop-launch.py`。其他设备或 Wayland 会话保留默认渲染；显式设置 `WEBKIT_DISABLE_DMABUF_RENDERER=0` 可在重启应用后恢复默认路径做对照。
+
+代价：同一 8 秒合成动画约从 59 帧/秒降至 39 帧/秒，UI 与 WebKit 进程合计 CPU 约从 68% 增至 110% 单核；兼容模式下应用及其采集子进程三轮 4 秒待机采样合计约 2.16% 单核。该动画负载不代表正常会议使用。部署后还需验证密码圆点随输入和删除更新、弹窗关闭、最小化和关闭到托盘后恢复的画面；仅确认 DOM 数值变化不足以证明显示正常。
