@@ -35,6 +35,41 @@ class KnowledgeTests(unittest.TestCase):
     asyncio.run(self.k.save_archive({**base,'events':[{'event':text,'source_ids':['t1'],'aliases':['纪要'],'conclusion':'保留标点','speakers':[],'valid_period':'待定'}]}))
    result=asyncio.run(self.k.search({'query':'会议纪要'}))
   self.assertEqual(len(result['results']),1);self.assertEqual(result['results'][0]['revision'],2)
+ def test_master_event_groups_meetings_and_preserves_claims(self):
+  with sqlite3.connect(self.k.SOURCE) as c:
+   c.execute("INSERT INTO meetings VALUES('m2','第二场会议','2026-10-22','')")
+   c.execute("INSERT INTO transcripts VALUES('t3','m2','结论变更。','发言人2',0,2,2,'c')")
+  with patch.object(self.k,'embed',AsyncMock(return_value=[[1.,0.]])):
+   for mid,tid in [('m1','t1'),('m2','t3')]:
+    event={'event':'同一项目的新讨论','source_ids':[tid],'aliases':['项目A'],'conclusion':mid,'speakers':[{'speaker':'发言人1','view':mid}]}
+    if mid=='m2':event['topic_id']=topic
+    asyncio.run(self.k.save_archive({'meeting_id':mid,'events':[event],'source_hash':self.k.source_hash(self.k.detail(mid)['transcripts'])}))
+    topic=self.k.event_catalog()[0]['id']
+  catalog=self.k.event_catalog();self.assertEqual(len(catalog),1);self.assertEqual(len(catalog[0]['records']),2)
+  self.assertEqual({r['conclusion'] for r in catalog[0]['records']},{'m1','m2'})
+ def test_legacy_migration_is_idempotent_and_keeps_sources(self):
+  with self.k.db() as c:c.execute('INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?,?,?)',('old','m1','旧事件','[]','[]','结论','待定','["t1"]','[]',1,'now'))
+  for _ in range(2):
+   with self.k.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM event_members WHERE event_id="old"').fetchone()[0],1)
+  self.assertEqual(self.k.event_catalog()[0]['records'][0]['source_ids'],['t1'])
+ def test_unknown_topic_is_rejected_without_partial_write(self):
+  with patch.object(self.k,'embed',AsyncMock(return_value=[[1.,0.]])):
+   with self.assertRaises(self.k.HTTPException):asyncio.run(self.k.save_archive({'meeting_id':'m1','source_hash':self.k.source_hash(self.k.detail('m1')['transcripts']),'events':[{'event':'测试','source_ids':['t1'],'topic_id':'missing'}]}))
+  with self.k.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM events').fetchone()[0],0)
+ def test_relations_carry_evidence_and_invalid_self_relation_rolls_back(self):
+  base={'meeting_id':'m1','source_hash':self.k.source_hash(self.k.detail('m1')['transcripts'])}
+  with patch.object(self.k,'embed',AsyncMock(return_value=[[1.,0.]])):
+   asyncio.run(self.k.save_archive({**base,'events':[{'event':'前置事项','source_ids':['t1']}]}))
+   target=self.k.event_catalog()[0]['id']
+   asyncio.run(self.k.save_archive({**base,'events':[{'event':'后续事项','source_ids':['t2'],'relations':[{'target_id':target,'kind':'前置依赖'}]}]}))
+   current=self.k.event_catalog()[0];self.assertEqual(current['relations'][0]['evidence_id'],current['records'][0]['id'])
+   with self.assertRaises(self.k.HTTPException):asyncio.run(self.k.save_archive({**base,'events':[{'event':'无效','topic_id':target,'source_ids':['t1'],'relations':[{'target_id':target,'kind':'关联'}]}]}))
+   with self.k.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM events').fetchone()[0],2)
+ def test_matching_recommends_without_automatic_attachment(self):
+  with patch.object(self.k,'embed',AsyncMock(return_value=[[1.,0.]])):
+   asyncio.run(self.k.save_archive({'meeting_id':'m1','source_hash':self.k.source_hash(self.k.detail('m1')['transcripts']),'events':[{'event':'项目规划','source_ids':['t1']}]}))
+   result=asyncio.run(self.k.match_events([{'event':'项目规划','aliases':[]}]))
+  self.assertEqual(len(result[0]['candidates']),1);self.assertNotIn('topic_id',result[0])
  def test_model_short_references_map_back_to_exact_transcript_ids(self):
   answer=json.dumps({'events':[{'event':'确认纪要保留标点','source_ids':['S2']},{'event':'无依据事项','source_ids':['S99']}]})
   with patch.object(self.k,'infer',AsyncMock(return_value=answer)):
