@@ -15,6 +15,8 @@ export interface RecordingState {
   speech_active: boolean;
   recording_duration: number | null;
   active_duration: number | null;
+  /** Identity of the active native session; null when nothing is recording. */
+  session_id: string | null;
 }
 
 export interface RecordingStoppedPayload {

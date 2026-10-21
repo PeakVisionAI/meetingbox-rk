@@ -63,6 +63,49 @@ pub fn is_linux_meeting_microphone(name: &str) -> bool {
         || (lower.contains("usb") && (lower.contains("alsa_input") || lower.contains("uac")))
 }
 
+pub fn meeting_microphone_score(name: &str) -> u8 {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("powerconf") || lower.contains("mn108") {
+        if lower.contains("alsa_input") { 3 } else { 2 }
+    } else { 1 }
+}
+
+/// Select a Pulse source without opening a device or changing the system default.
+/// Match recording's USB preference for automatic and onboard selections.
+pub fn resolve_pulse_microphone_source(
+    requested: Option<&str>, sources: &[String], default_source: Option<&str>,
+) -> Result<String, String> {
+    let usable = |name: &str| {
+        !name.is_empty() && !is_pulse_monitor_name(name)
+            && !name.to_ascii_lowercase().contains("hdmi")
+            && !name.starts_with("alsa_output.") && !is_raw_alsa_pcm_name(name)
+            && !is_generic_capture_alias(name)
+    };
+    let mut inputs: Vec<&str> = sources.iter().map(String::as_str).filter(|name| usable(name)).collect();
+    inputs.sort_unstable();
+    inputs.dedup();
+    let requested = requested.map(str::trim).filter(|name| !name.is_empty());
+    let names = requested.map(linux_device_lookup_names).unwrap_or_default();
+    if names.iter().any(|name| !usable(name) && !is_generic_capture_alias(name)) {
+        return Err("请选择物理麦克风，不能使用扬声器监视或 HDMI 输入".into());
+    }
+    let automatic = requested.is_none() || names.iter().any(|name| is_generic_capture_alias(name) || is_linux_onboard_capture(name));
+    if automatic {
+        if let Some(source) = inputs.iter().filter(|name| is_linux_meeting_microphone(name))
+            .max_by(|a, b| meeting_microphone_score(a).cmp(&meeting_microphone_score(b)).then_with(|| b.cmp(a))) {
+            return Ok((*source).to_string());
+        }
+    }
+    if let Some(source) = inputs.iter().find(|name| names.iter().any(|candidate| candidate == **name)) {
+        return Ok((*source).to_string());
+    }
+    if !automatic { return Err("所选麦克风当前不可用，请重新选择会议麦克风".into()); }
+    if let Some(source) = default_source.filter(|name| inputs.contains(name)) {
+        return Ok(source.to_string());
+    }
+    inputs.first().map(|name| name.to_string()).ok_or_else(|| "未找到可用的物理麦克风".into())
+}
+
 pub fn list_pulse_input_source_names() -> Vec<String> {
     let output = match std::process::Command::new("pactl")
         .args(["list", "short", "sources"])
@@ -110,6 +153,26 @@ pub fn linux_device_lookup_names(name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pulse_source_selection_matches_conference_preference() {
+        let board = "alsa_input.platform-rt5651.source";
+        let usb = "alsa_input.usb-PowerConf.mono";
+        let other = "alsa_input.usb-other.mono";
+        let sources: Vec<String> = [board, other, usb, "sink.monitor", "alsa_input.hdmiin.source"].iter().map(|s| s.to_string()).collect();
+        for request in [None, Some("default (input)"), Some(board)] {
+            assert_eq!(resolve_pulse_microphone_source(request, &sources, Some(board)).unwrap(), usb);
+        }
+        assert_eq!(resolve_pulse_microphone_source(Some(&format!("{other} (input)")), &sources, Some(board)).unwrap(), other);
+        assert_eq!(resolve_pulse_microphone_source(None, &[board.into()], Some("sink.monitor")).unwrap(), board);
+        assert!(resolve_pulse_microphone_source(Some("alsa_input.usb-unplugged"), &sources, Some(board)).is_err());
+        for invalid in ["sink.monitor", "alsa_output.rt5651.sink.monitor", "alsa_input.hdmiin.source", "hw:3"] {
+            assert!(resolve_pulse_microphone_source(Some(invalid), &sources, Some(board)).is_err(), "{invalid}");
+        }
+        assert!(resolve_pulse_microphone_source(None, &["sink.monitor".into(), "alsa_input.hdmiin.source".into()], None).is_err());
+        let mut reversed = sources.clone(); reversed.reverse();
+        assert_eq!(resolve_pulse_microphone_source(None, &sources, None), resolve_pulse_microphone_source(None, &reversed, None));
+    }
 
     #[test]
     fn default_aliases_conflict() {

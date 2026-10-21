@@ -11,6 +11,7 @@ pub mod bossai_provider;
 pub mod engine;
 pub mod worker;
 pub mod task;
+pub(crate) mod correction;
 
 // Re-export commonly used types
 pub use provider::{TranscriptionError, TranscriptionProvider, TranscriptResult};

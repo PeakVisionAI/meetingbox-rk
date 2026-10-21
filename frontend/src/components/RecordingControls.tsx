@@ -13,6 +13,13 @@ import { uiText } from '@/lib/uiText';
 import type { SpeakerCalibrationResult, StopRecordingResult } from '@/services/recordingService';
 import { recordingService } from '@/services/recordingService';
 
+// Exact native rejection for a voice stop whose session is no longer active.
+const STALE_SESSION_ERROR = '语音结束请求对应的会议已变更';
+
+// Result of a stop_recording invoke. Stale/no-recording both mean native refused
+// the stop and the existing recording context must be left untouched.
+type StopOutcome = 'stopped' | 'stale-session' | 'no-recording' | 'failed';
+
 interface RecordingControlsProps {
   isRecording: boolean;
   barHeights: string[];
@@ -21,6 +28,12 @@ interface RecordingControlsProps {
   onTranscriptReceived: (summary: SummaryResponse) => void;
   onTranscriptionError?: (message: string) => void;
   onStopInitiated?: () => void; // Called immediately when stop button is clicked
+  /**
+   * Called when a stop that already announced itself was refused by native
+   * (stale voice session, or nothing recording anymore) so the parent can drop
+   * its stopping state. The current recording context is left intact.
+   */
+  onStopRejected?: () => void;
   onBeforeStop?: () => Promise<boolean>;
   isRecordingDisabled: boolean;
   isParentProcessing: boolean;
@@ -42,6 +55,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   onTranscriptReceived,
   onTranscriptionError,
   onStopInitiated,
+  onStopRejected,
   onBeforeStop,
   isRecordingDisabled,
   isParentProcessing,
@@ -62,6 +76,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isValidatingModel, setIsValidatingModel] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
   const isWaveformActive = isRecording && !isPaused && hasSpeech;
+  // One stop flow at a time. The ref also covers the manual confirmation dialog
+  // while it is awaiting the user, so a duplicate voice command can never start
+  // a second stop in parallel.
+  const stopFlowRef = useRef(false);
 
   const togglePauseRecording = useCallback(async () => {
     if (!isRecording || isStopping || isProcessing || isParentProcessing) return;
@@ -152,8 +170,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     }
   }, [onRecordingStart, isStarting, isValidatingModel, selectedDevices, meetingName, isRecording]);
 
-  const stopRecordingAction = useCallback(async () => {
-    console.log('Executing stop recording...');
+  const stopRecordingAction = useCallback(async (sessionId?: string): Promise<StopOutcome> => {
+    console.log('Executing stop recording...', sessionId ? { session_id: sessionId } : '');
     try {
       setIsProcessing(true);
       const dataDir = await appDataDir();
@@ -163,7 +181,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       console.log('About to call stop_recording command');
       const result = await invoke<StopRecordingResult>('stop_recording', {
         args: {
-          save_path: savePath
+          save_path: savePath,
+          // Native rejects the stop atomically when this session is no longer
+          // the active recording, so a stale voice command cannot end another.
+          ...(sessionId ? { session_id: sessionId } : {}),
         }
       });
       console.log('stop_recording command completed successfully:', result);
@@ -173,50 +194,77 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       // Track successful transcription
       Analytics.trackTranscriptionSuccess();
       onRecordingStop(true, result.speaker_calibration);
+      return 'stopped';
     } catch (error) {
       console.error('Failed to stop recording:', error);
-      if (error instanceof Error) {
-        console.error('Error details:', {
-          message: error.message,
-          name: error.name,
-          stack: error.stack,
-        });
-        if (error.message.includes('No recording in progress')) {
-          return;
-        }
-      } else if (typeof error === 'string' && error.includes('No recording in progress')) {
-        return;
-      } else if (error && typeof error === 'object' && 'toString' in error) {
-        if (error.toString().includes('No recording in progress')) {
-          return;
-        }
+      const errorText = error instanceof Error ? error.message : typeof error === 'string' ? error : String(error);
+      if (errorText.includes(STALE_SESSION_ERROR)) {
+        // The voice command targeted a session that already ended. There is no
+        // save flow to run and the current recording (if any) must stay intact.
+        console.warn('Ignoring stale voice stop request:', errorText);
+        setIsProcessing(false);
+        return 'stale-session';
+      }
+      if (errorText.includes('No recording in progress')) {
+        setIsProcessing(false);
+        return 'no-recording';
       }
       setIsProcessing(false);
       onRecordingStop(false);
+      return 'failed';
     } finally {
       setIsStopping(false);
     }
   }, [onRecordingStop]);
 
-  const handleStopRecording = useCallback(async () => {
+  const handleStopRecording = useCallback(async (sessionId?: string) => {
     console.log('handleStopRecording called - isRecording:', isRecording, 'isStarting:', isStarting, 'isStopping:', isStopping);
-    if (!isRecording || isStarting || isStopping) {
+    if (!isRecording || isStarting || isStopping || stopFlowRef.current) {
       console.log('Early return from handleStopRecording due to state check');
       return;
     }
 
-    if (onBeforeStop && !(await onBeforeStop())) return;
+    // Claim the flow before any await so a duplicate stop (manual or voice)
+    // cannot enter while an earlier one is still waiting for the user.
+    stopFlowRef.current = true;
+    try {
+      if (sessionId) {
+        // A voice command was already confirmed by the speaker and must end the
+        // meeting directly, but only when native confirms the requested session
+        // is still the active recording.
+        try {
+          const nativeState = await recordingService.getRecordingState();
+          if (!nativeState.is_recording || nativeState.session_id !== sessionId) {
+            console.warn('Voice stop session no longer active; skipping stop');
+            return;
+          }
+        } catch (error) {
+          console.warn('Could not verify voice stop session:', error);
+          return;
+        }
+      } else if (onBeforeStop && !(await onBeforeStop())) return;
 
-    console.log('Stopping recording...');
+      console.log('Stopping recording...');
 
-    // Notify parent immediately (for UI state updates)
-    onStopInitiated?.();
+      // Notify the parent immediately (for UI state updates). onStopRejected
+      // below undoes this if native refuses the stop after this point.
+      const stopAnnounced = !!onStopInitiated;
+      onStopInitiated?.();
 
-    setIsStopping(true);
+      setIsStopping(true);
 
-    // Immediately trigger the stop action
-    await stopRecordingAction();
-  }, [isRecording, isStarting, isStopping, stopRecordingAction, onStopInitiated, onBeforeStop]);
+      // Immediately trigger the stop action
+      const outcome = await stopRecordingAction(sessionId);
+      if (stopAnnounced && (outcome === 'stale-session' || outcome === 'no-recording')) {
+        // Native refused an announced stop (the session ended atomically, or
+        // nothing was recording anymore). Drop the parent's stopping state so
+        // the UI stays usable; the recording context itself is untouched.
+        onStopRejected?.();
+      }
+    } finally {
+      stopFlowRef.current = false;
+    }
+  }, [isRecording, isStarting, isStopping, stopRecordingAction, onStopInitiated, onStopRejected, onBeforeStop]);
 
   useEffect(() => {
     return () => {
@@ -315,13 +363,42 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     };
   }, [onRecordingStop, onTranscriptionError]);
 
+  // Single owner of window-level stop requests. Both entry points route through
+  // handleStopRecording so the duplicate guard covers manual and voice stops.
   useEffect(() => {
     const handleHeaderStop = () => {
       void handleStopRecording();
     };
+    // A voice stop carries the native session id, so a stale route action can
+    // never end a meeting it did not target.
+    const handleVoiceStop = (event: Event) => {
+      const detail = (event as CustomEvent<{ session_id?: string }>).detail;
+      const sessionId = detail?.session_id;
+      if (!sessionId) return;
+      void handleStopRecording(sessionId);
+    };
     window.addEventListener('end-meeting-from-header', handleHeaderStop);
-    return () => window.removeEventListener('end-meeting-from-header', handleHeaderStop);
+    window.addEventListener('end-meeting-by-voice', handleVoiceStop);
+    return () => {
+      window.removeEventListener('end-meeting-from-header', handleHeaderStop);
+      window.removeEventListener('end-meeting-by-voice', handleVoiceStop);
+    };
   }, [handleStopRecording]);
+
+  // Announce bridge readiness after the stop listener above is registered, so a
+  // route handoff only replays a pending voice stop once this component owns the
+  // window event. The parent also probes once on mount for the reverse order.
+  useEffect(() => {
+    const announce = () => {
+      window.dispatchEvent(new CustomEvent('recording-controls-ready', { detail: true }));
+    };
+    announce();
+    window.addEventListener('request-recording-controls-ready', announce);
+    return () => {
+      window.removeEventListener('request-recording-controls-ready', announce);
+      window.dispatchEvent(new CustomEvent('recording-controls-ready', { detail: false }));
+    };
+  }, []);
 
   return (
     <TooltipProvider>

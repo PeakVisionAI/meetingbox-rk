@@ -217,7 +217,7 @@ const ENERGY_SPEECH_RMS: f32 = 0.025;
 // Silero treat silence as speech and causes ASR hallucinations.
 const VAD_NORMALIZATION_MIN_PEAK: f32 = 0.01;
 const ENERGY_MIN_SAMPLES_16K: usize = 32000; // 2s before a live emit
-const ENERGY_FLUSH_MIN_SAMPLES_16K: usize = 32000; // 2s on stop
+const ENERGY_FLUSH_MIN_SAMPLES_16K: usize = 1600; // Keep 100ms speech tails on silence/stop
 const MAX_HOLDING_QUIET_WINDOWS: u32 = 10; // 1s at the 100ms mix-window cadence
 
 fn downsample_for_energy_fallback(samples: &[f32], sample_rate: u32) -> Vec<f32> {
@@ -830,7 +830,7 @@ impl AudioPipeline {
     fn send_transcription_16k(&mut self, samples: Vec<f32>, reason: &str) {
         if samples.len() < ENERGY_FLUSH_MIN_SAMPLES_16K {
             info!(
-                "⏭️ Skipping short {} segment: {} samples (< {} = 1s)",
+                "⏭️ Skipping short {} segment: {} samples (< {} = 100ms)",
                 reason,
                 samples.len(),
                 ENERGY_FLUSH_MIN_SAMPLES_16K
@@ -950,6 +950,12 @@ impl AudioPipeline {
                             // System audio at natural levels
                             // Previous 2x gain was causing excessive limiting/distortion
                             let mixed_with_gain = mixed_clean;
+                            let live_audio = downsample_for_energy_fallback(&mixed_with_gain, self.sample_rate);
+                            let live_end = self.state.get_recording_duration().unwrap_or(0.0);
+                            super::live_transcript::submit_audio(
+                                &live_audio,
+                                (live_end - live_audio.len() as f64 / 16000.0).max(0.0),
+                            );
 
                             let mix_rms = mix_window_rms(&mixed_with_gain);
                             let mix_peak = mix_window_peak(&mixed_with_gain);

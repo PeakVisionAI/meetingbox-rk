@@ -75,6 +75,7 @@ static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
     save_path: String,
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -166,7 +167,7 @@ async fn stop_recording<R: Runtime>(
     log_info!("Attempting to stop recording...");
 
     // Check the actual audio recording system state instead of the flag
-    if !audio::recording_commands::is_recording().await {
+    if args.session_id.is_none() && !audio::recording_commands::is_recording().await {
         log_info!("Recording is already stopped");
         return Ok(audio::recording_commands::StopRecordingResult::default());
     }
@@ -176,6 +177,7 @@ async fn stop_recording<R: Runtime>(
         app.clone(),
         audio::recording_commands::RecordingArgs {
             save_path: args.save_path.clone(),
+            session_id: args.session_id.clone(),
         },
     )
     .await
@@ -217,8 +219,7 @@ async fn stop_recording<R: Runtime>(
         }
         Err(e) => {
             log_error!("Failed to stop audio recording: {}", e);
-            // Still update the flag even if stopping failed
-            RECORDING_FLAG.store(false, Ordering::SeqCst);
+            RECORDING_FLAG.store(audio::recording_commands::recording_active(), Ordering::SeqCst);
             tray::update_tray_menu(&app);
             Err(format!("Failed to stop recording: {}", e))
         }

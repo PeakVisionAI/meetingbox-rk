@@ -79,6 +79,7 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
                 app_clone.clone(),
                 crate::audio::recording_commands::RecordingArgs {
                     save_path: save_path.to_string_lossy().to_string(),
+                    session_id: None,
                 },
             )
             .await;
@@ -177,6 +178,7 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
             app_clone.clone(),
             crate::audio::recording_commands::RecordingArgs {
                 save_path: save_path.to_string_lossy().to_string(),
+                session_id: None,
             },
         )
         .await;
