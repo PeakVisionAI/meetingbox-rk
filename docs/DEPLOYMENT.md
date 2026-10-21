@@ -152,15 +152,17 @@ sudo frontend/src-tauri/scripts/prepare-device-release.sh \
   ./meetingbox_<version>_arm64.deb ./license.json
 ~~~
 
-该脚本会安装许可证、安装关机/重启/待机所需的 polkit 策略，并用 apt 安装 Debian 包。
+该脚本会安装许可证、安装关机/重启所需的 polkit 策略，并用 apt 安装 Debian 包。
 
 也可以手动安装：
 
 ~~~bash
 sudo apt install ./meetingbox_<version>_arm64.deb
 sudo frontend/src-tauri/scripts/install-license.sh ./license.json
-sudo frontend/src-tauri/scripts/install-power-policy.sh
+sudo frontend/src-tauri/scripts/install-power-policy.sh ubuntu
 ~~~
+
+将 `ubuntu` 替换为应用的实际桌面运行用户。Ubuntu 22.04 的 polkit 0.105 使用 `.pkla` 策略；安装脚本会创建 `/etc/polkit-1/localauthority/50-local.d/50-meetingbox-power.pkla`，同时为新版 polkit 安装 `.rules`。授权仅覆盖该用户的活动本地桌面会话的关机和重启（包含有其他登录会话时的操作），SSH 会话不授予免认证权限。
 
 许可证权限应保持为 root 所有，运行用户可读（通常为 640）。不要把私钥、源码、.git、target/ 或模型下载缓存放到客户设备。
 

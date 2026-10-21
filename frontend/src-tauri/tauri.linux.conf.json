@@ -10,7 +10,7 @@
         "minWidth": 1180,
         "minHeight": 720,
         "resizable": true,
-        "fullscreen": false,
+        "fullscreen": true,
         "maximized": true,
         "theme": "Light",
         "decorations": true

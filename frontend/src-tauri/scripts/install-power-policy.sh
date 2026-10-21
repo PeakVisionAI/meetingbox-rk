@@ -32,13 +32,13 @@ if [[ -d /etc/polkit-1/rules.d ]]; then
   echo "Installed $rules_path"
 fi
 
-if [[ -d /etc/polkit-1/localauthority ]]; then
-  install -d -m 0755 "$(dirname "$pkla_path")"
-  sed "s/@MEETINGBOX_POWER_USER@/$app_user/g" \
-    "$script_dir/50-meetingbox-power.pkla" > "$temporary_pkla"
-  install -m 0644 "$temporary_pkla" "$pkla_path"
-  echo "Installed $pkla_path"
-fi
+# Ubuntu 22.04's polkit 0.105 uses .pkla policies rather than JavaScript rules.
+# Provision its directory even when the image only contains rules.d.
+install -d -m 0755 "$(dirname "$pkla_path")"
+sed "s/@MEETINGBOX_POWER_USER@/$app_user/g" \
+  "$script_dir/50-meetingbox-power.pkla" > "$temporary_pkla"
+install -m 0644 "$temporary_pkla" "$pkla_path"
+echo "Installed $pkla_path"
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl try-restart polkit.service || true

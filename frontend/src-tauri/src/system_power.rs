@@ -21,12 +21,15 @@ pub async fn system_power_action(action: PowerAction) -> Result<(), String> {
     if crate::audio::recording_commands::is_recording().await {
         return Err("会议录制中，请先结束并保存会议".to_string());
     }
+    // Keep recording initialization, import and retranscription out of this request.
+    let _operation_guard = crate::audio::transcription::rk_policy::AsrOperationGuard::acquire()
+        .map_err(|_| "录音、导入或转写任务进行中，请等待完成后再执行电源操作".to_string())?;
 
     #[cfg(target_os = "linux")]
     {
         let verb = action.systemctl_verb();
         let output = tokio::process::Command::new("systemctl")
-            .args(["--no-block", verb])
+            .args(["--no-ask-password", "--no-block", verb])
             .output()
             .await
             .map_err(|error| format!("无法执行系统电源操作: {error}"))?;

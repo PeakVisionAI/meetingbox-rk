@@ -518,8 +518,10 @@ button { cursor: pointer; }
 .hyos-main.hyos-live-main .hyos-live-controls .hyos-control-waveform { flex: 0 0 75px; width: 75px; height: 20px; }
 .hyos-access-loading { height: 100vh; display: grid; place-items: center; background: #f2f4f7; color: #60738d; }
 .hyos-login-screen { position: relative; width: 100%; height: 100vh; min-width: 1040px; min-height: 650px; overflow: hidden; background: #f2f4f7; }
+/* The 1440x900 art letterboxes on non-16:10 screens (e.g. 1280x960); keep the tagline patch on the art. */
+.hyos-login-stage { position: absolute; top: 50%; left: 50%; width: min(100%, 160vh); aspect-ratio: 1440 / 900; transform: translate(-50%, -50%); container-type: inline-size; pointer-events: none; }
 .hyos-login-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; user-select: none; pointer-events: none; }
-.hyos-login-tagline { position: absolute; z-index: 1; top: 18.4%; left: 9.35%; width: 31%; height: 8.6%; display: flex; align-items: center; padding-left: .95%; box-sizing: border-box; background: linear-gradient(90deg, #f4f7fd 0%, #f4f7fd 84%, rgb(244 247 253 / 0%) 100%); color: #10243c; font-family: "Noto Sans SC", "PingFang SC", sans-serif; font-size: 2.78vw; line-height: 1; font-weight: 700; letter-spacing: 0; }
+.hyos-login-tagline { position: absolute; z-index: 1; top: 18.4%; left: 5.6%; width: 34.75%; height: 8.6%; display: flex; align-items: center; padding-left: .35%; box-sizing: border-box; background: linear-gradient(90deg, #f4f7fd 0%, #f4f7fd 84%, rgb(244 247 253 / 0%) 100%); color: #10243c; font-family: "Noto Sans SC", "PingFang SC", sans-serif; font-size: 2.78vw; font-size: 2.78cqw; line-height: 1; font-weight: 700; letter-spacing: 0; }
 .hyos-login-card { position: absolute; top: 22.2222%; right: 9.7222%; width: 28.0556vw; height: 51.2222vh; min-width: 360px; min-height: 374px; display: flex; flex-direction: column; box-sizing: border-box; padding: 2.36vw 2.22vw 1.67vw; border: 0; border-radius: 1.11vw; background: #fff; color: #10243c; font-family: "Noto Sans SC", "PingFang SC", sans-serif; }
 .hyos-login-card h1 { margin: 0; color: #111b2d; font-size: 1.528vw; line-height: 2.08vw; font-weight: 700; letter-spacing: 0; }
 .hyos-login-card .hyos-login-product-name { margin: -.12vw 0 .72vw; color: #6c7b8d; font-size: .76vw; line-height: 1.1vw; }
@@ -541,6 +543,7 @@ button { cursor: pointer; }
   .hyos-login-card { right: 4%; min-width: 0; min-height: 420px; }
 }
 @media (max-width: 860px) {
+  .hyos-login-stage { top: 0; left: 0; width: 1440px; height: 100%; aspect-ratio: auto; transform: none; }
   .hyos-login-art { width: auto; min-width: 1440px; left: 0; right: auto; object-fit: initial; }
   .hyos-login-card { right: 24px; width: 360px; height: auto; min-height: 374px; padding: 30px 28px 22px; }
   .hyos-login-card h1 { font-size: 20px; line-height: 28px; }.hyos-login-card .hyos-login-product-name { margin: -2px 0 8px; font-size: 11px; line-height: 16px; }.hyos-login-card h2 { font-size: 16px; line-height: 22px; }.hyos-login-card > p, .hyos-login-card label { font-size: 12px; line-height: 17px; }.hyos-login-card input { font-size: 14px; }.hyos-login-submit { font-size: 14px; }.hyos-form-tip, .hyos-warning, .hyos-login-status { font-size: 11px; }
