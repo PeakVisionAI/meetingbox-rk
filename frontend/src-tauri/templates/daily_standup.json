@@ -1,0 +1,39 @@
+{
+  "name": "每日站会",
+  "description": "研发/产品团队的短时每日同步。",
+  "sections": [
+    {
+      "title": "日期",
+      "instruction": "YYYY-MM-DD",
+      "format": "string"
+    },
+    {
+      "title": "参会人",
+      "instruction": "列出出席人员",
+      "format": "list"
+    },
+    {
+      "title": "昨日完成",
+      "instruction": "昨天完成的工作（短条目）",
+      "format": "list",
+      "example_item_format": "| **负责人** | **完成内容** |\n| --- | --- |"
+    },
+    {
+      "title": "今日计划",
+      "instruction": "今天计划做的工作（短条目）",
+      "format": "list",
+      "example_item_format": "| **负责人** | **计划内容** |\n| --- | --- |"
+    },
+    {
+      "title": "阻塞项",
+      "instruction": "遇到的阻碍及负责人（如已知）",
+      "format": "list",
+      "item_format": "| **负责人** | **阻塞** | 影响 |\n| --- | --- | --- |"
+    },
+    {
+      "title": "备注",
+      "instruction": "可选的简短说明或通知",
+      "format": "paragraph"
+    }
+  ]
+}

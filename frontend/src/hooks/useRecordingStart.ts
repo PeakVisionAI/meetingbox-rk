@@ -1,0 +1,231 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { useTranscripts } from '@/contexts/TranscriptContext';
+import { useSidebar } from '@/components/Sidebar/SidebarProvider';
+import { useConfig } from '@/contexts/ConfigContext';
+import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
+import { recordingService } from '@/services/recordingService';
+import Analytics from '@/lib/analytics';
+import { showRecordingNotification } from '@/lib/recordingNotification';
+import { toast } from 'sonner';
+
+interface UseRecordingStartReturn {
+  handleRecordingStart: (titleOverride?: string) => Promise<void>;
+  isAutoStarting: boolean;
+}
+
+/**
+ * Custom hook for managing recording start lifecycle.
+ * Handles both manual start (button click) and auto-start (from sidebar navigation).
+ *
+ * Features:
+ * - Meeting title generation (format: Meeting DD_MM_YY_HH_MM_SS)
+ * - Transcript clearing on start
+ * - Analytics tracking
+ * - Recording notification display
+ * - Auto-start from sidebar via sessionStorage flag
+ */
+export function useRecordingStart(
+  isRecording: boolean,
+  setIsRecording: (value: boolean) => void,
+  showModal?: (name: 'modelSelector', message?: string) => void
+): UseRecordingStartReturn {
+  const [isAutoStarting, setIsAutoStarting] = useState(false);
+  const startInFlightRef = useRef(false);
+
+  const { clearTranscripts, setMeetingTitle } = useTranscripts();
+  const { setIsMeetingActive, setCurrentMeeting } = useSidebar();
+  const { selectedDevices, transcriptModelConfig } = useConfig();
+  const { setStatus } = useRecordingState();
+
+  // Generate meeting title with timestamp
+  const generateMeetingTitle = useCallback(() => {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = String(now.getFullYear()).slice(-2);
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
+  }, []);
+
+  const usesLocalParakeet = transcriptModelConfig.provider === 'parakeet';
+
+  // Check if Parakeet transcription model is ready
+  const checkParakeetReady = useCallback(async (): Promise<boolean> => {
+    try {
+      await invoke('parakeet_init');
+      const hasModels = await invoke<boolean>('parakeet_has_available_models');
+      return hasModels;
+    } catch (error) {
+      console.error('Failed to check Parakeet status:', error);
+      return false;
+    }
+  }, []);
+
+  // Check if any model is currently downloading
+  const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
+    try {
+      const models = await invoke<any[]>('parakeet_get_available_models');
+      const isDownloading = models.some(m =>
+        m.status && (
+          typeof m.status === 'object'
+            ? 'Downloading' in m.status
+            : m.status === 'Downloading'
+        )
+      );
+      return isDownloading;
+    } catch (error) {
+      console.error('Failed to check model download status:', error);
+      return false; // Default to not downloading (will show error + modal)
+    }
+  }, []);
+
+  const ensureTranscriptionReady = useCallback(async (
+    source: 'home_page' | 'sidebar_auto' | 'sidebar_direct'
+  ): Promise<boolean> => {
+    // RK ASR and other non-Parakeet providers are validated by the backend.
+    if (!usesLocalParakeet) {
+      return true;
+    }
+
+    const parakeetReady = await checkParakeetReady();
+    if (parakeetReady) {
+      return true;
+    }
+
+    const isDownloading = await checkIfModelDownloading();
+    if (isDownloading) {
+      toast.info('Model download in progress', {
+        description: 'Please wait for the transcription model to finish downloading before recording.',
+        duration: 5000,
+      });
+      Analytics.trackButtonClick('start_recording_blocked_downloading', source);
+    } else {
+      toast.error('Transcription model not ready', {
+        description: 'Please download a transcription model before recording.',
+        duration: 5000,
+      });
+      showModal?.('modelSelector', 'Transcription model setup required');
+      Analytics.trackButtonClick('start_recording_blocked_missing', source);
+    }
+    setStatus(RecordingStatus.IDLE);
+    return false;
+  }, [usesLocalParakeet, checkParakeetReady, checkIfModelDownloading, showModal, setStatus]);
+
+  // Handle manual recording start (from button click)
+  const handleRecordingStart = useCallback(async (titleOverride?: string) => {
+    if (startInFlightRef.current) {
+      return;
+    }
+    startInFlightRef.current = true;
+    try {
+      window.dispatchEvent(new CustomEvent('recording-start-stage', {detail:'正在检查录音状态'}));
+      if (await recordingService.isRecording()) {
+        setIsRecording(true);
+        setIsMeetingActive(true);
+        return;
+      }
+      // Reconcile stale page state after returning from a saved meeting.
+      setIsRecording(false);
+      setIsMeetingActive(false);
+
+      console.log('handleRecordingStart called - checking transcription provider', transcriptModelConfig.provider);
+
+      if (!(await ensureTranscriptionReady('home_page'))) {
+        throw new Error('语音模型尚未就绪，请完成模型准备后重试');
+      }
+
+      window.dispatchEvent(new CustomEvent('local-services-check-start'));
+      try { await invoke('ensure_local_services'); }
+      finally { window.dispatchEvent(new CustomEvent('local-services-check-end')); }
+
+      console.log('Transcription provider ready - setting up meeting title and state');
+
+      const randomTitle = titleOverride?.trim() || generateMeetingTitle();
+      setMeetingTitle(randomTitle);
+      // Keep the user-provided title available even if the native stop event
+      // arrives before its metadata listener is attached.
+      sessionStorage.setItem('active_recording_meeting_name', randomTitle);
+      // Saving happens after transcription has finished. Preserve the moment the
+      // meeting actually began so the file library does not use its save time.
+      sessionStorage.setItem('active_recording_started_at', new Date().toISOString());
+      setCurrentMeeting({ id: 'active-recording', title: randomTitle });
+
+      // Set STARTING status before initiating backend recording
+      window.dispatchEvent(new CustomEvent('recording-start-stage', {detail:'正在初始化录音设备'}));
+      setStatus(RecordingStatus.STARTING, '正在初始化录音设备');
+
+      // Start the actual backend recording
+      console.log('Starting backend recording with meeting:', randomTitle);
+      await recordingService.startRecordingWithDevices(
+        selectedDevices?.micDevice || null,
+        selectedDevices?.systemDevice || null,
+        randomTitle
+      );
+      console.log('Backend recording started successfully');
+
+      // Update state after successful backend start
+      // Note: RECORDING status will be set by RecordingStateContext event listener
+      console.log('Setting isRecordingState to true');
+      setIsRecording(true); // This will also update the sidebar via the useEffect
+      clearTranscripts(); // Clear previous transcripts when starting new recording
+      setIsMeetingActive(true);
+      Analytics.trackButtonClick('start_recording', 'home_page');
+
+      // Show recording notification if enabled
+      await showRecordingNotification();
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      setStatus(RecordingStatus.ERROR, error instanceof Error ? error.message : 'Failed to start recording');
+      setIsRecording(false); // Reset state on error
+      Analytics.trackButtonClick('start_recording_error', 'home_page');
+      // Re-throw so RecordingControls can handle device-specific errors
+      throw error;
+    } finally {
+      startInFlightRef.current = false;
+    }
+  }, [isRecording, generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, setCurrentMeeting, ensureTranscriptionReady, selectedDevices, transcriptModelConfig.provider, setStatus]);
+
+  useEffect(() => {
+    const onTrayOrSidebarStart = () => {
+      void handleRecordingStart().catch((error) => {
+        console.error('Failed to start recording from tray/sidebar:', error);
+      });
+    };
+    window.addEventListener('start-recording-from-sidebar', onTrayOrSidebarStart);
+    return () => window.removeEventListener('start-recording-from-sidebar', onTrayOrSidebarStart);
+  }, [handleRecordingStart]);
+
+  // Check for autoStartRecording flag and start recording automatically
+  useEffect(() => {
+    const checkAutoStartRecording = async () => {
+      const shouldAutoStart = sessionStorage.getItem('autoStartRecording');
+      if (shouldAutoStart !== 'true' || isRecording || isAutoStarting) {
+        return;
+      }
+      sessionStorage.removeItem('autoStartRecording');
+      if (await recordingService.isRecording()) {
+        setIsRecording(true);
+        setIsMeetingActive(true);
+        return;
+      }
+      setIsAutoStarting(true);
+      try {
+        await handleRecordingStart();
+      } catch (error) {
+        console.error('Failed to auto-start recording:', error);
+      } finally {
+        setIsAutoStarting(false);
+      }
+    };
+
+    void checkAutoStartRecording();
+  }, [isRecording, isAutoStarting, handleRecordingStart, setIsRecording, setIsMeetingActive]);
+
+  return {
+    handleRecordingStart,
+    isAutoStarting,
+  };
+}

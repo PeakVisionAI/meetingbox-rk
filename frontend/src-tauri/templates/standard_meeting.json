@@ -1,0 +1,32 @@
+{
+  "name": "标准会议纪要",
+  "description": "按主题归纳结论、讨论、决策和行动项。",
+  "sections": [
+    {
+      "title": "核心结论",
+      "instruction": "概括真实主题及主要结果，不编造。",
+      "format": "paragraph"
+    },
+    {
+      "title": "议题讨论",
+      "instruction": "按业务主题归纳事实、数据、观点和建议，保留不同观点，不按逐句发言复述。",
+      "format": "paragraph"
+    },
+    {
+      "title": "决策事项",
+      "instruction": "仅列明确达成或要求执行的决定。无决定写本次未形成明确决策。",
+      "format": "list"
+    },
+    {
+      "title": "行动项",
+      "instruction": "仅列明确任务。负责人和完成时间缺失写未明确。",
+      "format": "list",
+      "item_format": "| 事项 | 负责人 | 完成时间 |\n| --- | --- | --- |"
+    },
+    {
+      "title": "待确认事项",
+      "instruction": "列原文疑问、未决事项及疑似转写错误；不推断补充。",
+      "format": "list"
+    }
+  ]
+}

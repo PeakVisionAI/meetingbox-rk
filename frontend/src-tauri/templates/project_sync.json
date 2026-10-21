@@ -1,0 +1,51 @@
+{
+  "name": "项目同步 / 进度会",
+  "description": "周会或双周会，聚焦里程碑、风险和待办。",
+  "sections": [
+    {
+      "title": "会议时间",
+      "instruction": "日期、起止时间、主持人",
+      "format": "string"
+    },
+    {
+      "title": "参会人",
+      "instruction": "列出参会人及其角色",
+      "format": "list"
+    },
+    {
+      "title": "里程碑与状态",
+      "instruction": "当前里程碑、状态和预计完成时间",
+      "format": "list",
+      "item_format": "| **里程碑** | **状态** | **预计完成** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "进展摘要",
+      "instruction": "用一段话概括自上次同步以来的进展",
+      "format": "paragraph"
+    },
+    {
+      "title": "主要风险与应对",
+      "instruction": "列出主要风险、影响、应对措施和负责人",
+      "format": "list",
+      "item_format": "| **风险** | **影响** | **应对** | **负责人** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "关键决策",
+      "instruction": "本次会议做出的决定、理由和时间戳",
+      "format": "list",
+      "item_format": "| **决策** | **理由** | **时间戳** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "待办事项",
+      "instruction": "任务、负责人、截止日期、优先级和状态",
+      "format": "list",
+      "item_format": "| **负责人** | **任务** | **截止日期** | **优先级** | **状态** |\n| --- | --- | --- | --- | --- |"
+    },
+    {
+      "title": "相关文档",
+      "instruction": "讨论中提到的文档、工单或设计链接",
+      "format": "list",
+      "item_format": "| **文档名称** | **链接** | **类型** |\n| --- | --- | --- |"
+    }
+  ]
+}

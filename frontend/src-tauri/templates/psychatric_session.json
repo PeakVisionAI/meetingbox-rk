@@ -1,0 +1,64 @@
+{
+  "name": "精神科会话记录（SOAP + AI）",
+  "description": "基于 SOAP 的精神科病程记录，含临床信息与 AI 摘要。",
+  "sections": [
+    {
+      "title": "会话信息",
+      "instruction": "患者姓名缩写/ID、日期、医生、会话类型、时长（注意隐私）",
+      "format": "string"
+    },
+    {
+      "title": "AI 会话摘要",
+      "instruction": "一句话结论，加一段摘要，并给出置信度。",
+      "format": "paragraph"
+    },
+    {
+      "title": "主观（S）",
+      "instruction": "患者自述的情绪、症状、睡眠、食欲和压力源",
+      "format": "paragraph"
+    },
+    {
+      "title": "客观（O）",
+      "instruction": "可观察发现：情感、言语、行为、定向力，必要时含生命体征",
+      "format": "paragraph"
+    },
+    {
+      "title": "评估（A）",
+      "instruction": "诊断印象、风险（自杀/伤人意念）、相对治疗目标的进展",
+      "format": "paragraph"
+    },
+    {
+      "title": "计划（P）",
+      "instruction": "干预、用药调整、转介、治疗作业和随访",
+      "format": "list",
+      "item_format": "| **干预** | **负责人** | **频率** | **随访日期** |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "用药",
+      "instruction": "当前药物、剂量、变更及理由",
+      "format": "list",
+      "item_format": "| **药物** | **剂量** | **途径** | **开始/变更日期** |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "诊断（DSM/ICD）",
+      "instruction": "列出诊断编码和当前工作诊断",
+      "format": "list",
+      "item_format": "| **编码** | **体系** | **诊断** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "安全与风险管理",
+      "instruction": "安全计划、紧急联系人、是否考虑住院",
+      "format": "paragraph"
+    },
+    {
+      "title": "下次预约",
+      "instruction": "下次会话的日期、时间和形式",
+      "format": "string"
+    },
+    {
+      "title": "审核记录",
+      "instruction": "是否需人工复核、复核人、时间戳、AI 版本",
+      "format": "paragraph"
+    }
+  ]
+}

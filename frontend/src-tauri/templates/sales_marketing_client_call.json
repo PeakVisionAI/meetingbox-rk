@@ -1,0 +1,44 @@
+{
+  "name": "客户 / 销售会议",
+  "description": "记录客户目标、交付物和下一步。",
+  "sections": [
+    {
+      "title": "会议信息",
+      "instruction": "日期、时间、地点/形式、客户经理",
+      "format": "string"
+    },
+    {
+      "title": "参会人",
+      "instruction": "客户与我方人员及角色",
+      "format": "list"
+    },
+    {
+      "title": "客户目标与成功标准",
+      "instruction": "客户想达成什么，以及如何衡量成功",
+      "format": "paragraph"
+    },
+    {
+      "title": "已确认交付物",
+      "instruction": "交付物、负责人和截止日期",
+      "format": "list",
+      "item_format": "| **交付物** | **负责人** | **截止日期** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "商务条款",
+      "instruction": "讨论过的价格、SLA、付款或合同条款",
+      "format": "paragraph"
+    },
+    {
+      "title": "风险与顾虑",
+      "instruction": "客户顾虑、阻塞或需升级事项",
+      "format": "list",
+      "item_format": "| **顾虑** | **影响** | **负责人** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "下一步",
+      "instruction": "行动、负责人和截止日期",
+      "format": "list",
+      "item_format": "| **负责人** | **行动** | **截止日期** |\n| --- | --- | --- |"
+    }
+  ]
+}
