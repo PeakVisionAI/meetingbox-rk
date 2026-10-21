@@ -86,6 +86,11 @@ class KnowledgeTests(unittest.TestCase):
  def test_stitched_model_quotes_keep_only_verified_fragment(self):
   e={'evidence_quote':'白鹤滩电站正在投产。无依据的另一项结论。'}
   self.assertEqual(self.k.verified_quote(e,[{'transcript':'嗯，白鹤滩电站正在投产。'}]),'白鹤滩电站正在投产')
+ def test_stream_cursor_and_session_isolation(self):
+  self.k.SESSION='session-a'
+  self.k.CHAT_STREAMS['request-1']={'session':'session-a','events':[{'type':'delta','text':'你好'},{'type':'done'}]}
+  self.assertEqual(self.k.chat_events({'request_id':'request-1','cursor':1}),{'events':[{'type':'done'}],'cursor':2})
+  self.k.SESSION='session-b';self.assertEqual(self.k.chat_events({'request_id':'request-1'})['events'],[])
  def test_docx_transcript_preserves_punctuation_and_grouping(self):
   from docx import Document
   result=asyncio.run(self.k.make_document({'meeting_id':'m1','kind':'transcript'}))

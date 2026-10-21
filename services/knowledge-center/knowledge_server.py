@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 ROOT=Path(os.getenv('MEETINGBOX_KNOWLEDGE_ROOT',r'D:\MeetingBox-Intel\knowledge-center'))
 SOURCE=Path(os.getenv('MEETINGBOX_SOURCE_DB',r'C:\Users\Administrator\AppData\Roaming\com.meetily.ai\meeting_minutes.sqlite'))
@@ -18,6 +18,7 @@ if not TOKEN_FILE.exists():TOKEN_FILE.write_text(TOKEN)
 MODEL='Qwen3.5-35B-A3B-Q4_K_M'
 PROCESS_FLAGS={'creationflags':0x08000000} if sys.platform=='win32' else {}
 SESSION=None; LAST_SEEN=0.; STAGE='等待管理员进入'; READY=False; ERROR=None; BUSY=None; PREPARING=False
+CHAT_STREAMS={}
 MODE_LOCK=asyncio.Lock(); JOB_LOCK=asyncio.Lock(); LLM_LOCK=asyncio.Lock()
 SCHEMA='''CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,event TEXT NOT NULL,aliases TEXT NOT NULL,speakers TEXT NOT NULL,conclusion TEXT NOT NULL,valid_period TEXT NOT NULL,source_ids TEXT NOT NULL,embedding TEXT,revision INTEGER NOT NULL,created_at TEXT NOT NULL);CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);CREATE TABLE IF NOT EXISTS voice_notes(meeting_id TEXT,speaker_key TEXT,name TEXT NOT NULL,note TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(meeting_id,speaker_key));CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY,meeting_id TEXT,title TEXT,markdown TEXT,path TEXT,created_at TEXT);CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);'''
 def db():
@@ -344,20 +345,47 @@ async def make_document(p):
  with db() as c:c.execute('INSERT INTO documents(id,meeting_id,title,markdown,path,created_at,kind) VALUES(?,?,?,?,?,?,?)',(uid,mid,title,markdown,path,stamp(),doc_kind))
  return {'id':uid,'title':title,'markdown':markdown,'path':path}
 
+def chat_events(p):
+ key=str(p.get('request_id',''));stream=CHAT_STREAMS.get(key)
+ if not stream or stream['session']!=SESSION:return {'events':[],'cursor':0}
+ cursor=max(0,int(p.get('cursor',0)));return {'events':stream['events'][cursor:cursor+200],'cursor':min(len(stream['events']),cursor+200)}
+
 async def pi_chat(p):
  query=str(p.get('query','')).strip()[:2500]
  if not query:raise HTTPException(400,'请输入问题')
- evidence=await search({'query':query});env={**os.environ,'MEETINGBOX_KB_TOKEN':TOKEN,'MEETINGBOX_KB_SESSION':SESSION or ''}
- proc=await asyncio.create_subprocess_exec(os.getenv('MEETINGBOX_NODE',r'C:\Program Files\nodejs\node.exe'),str(Path(__file__).parent/'pi-worker.mjs'),stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,env=env,**PROCESS_FLAGS)
- data={'query':query,'evidence':evidence,'history':p.get('history',[])[-4:]}
- try:out,err=await asyncio.wait_for(proc.communicate(json.dumps(data,ensure_ascii=False).encode()),480)
- except asyncio.TimeoutError:proc.kill();await proc.wait();raise HTTPException(504,'助手处理超时，请缩小问题范围')
- if proc.returncode:
+ key=str(p.get('request_id') or uuid.uuid4())
+ if not re.fullmatch(r'[A-Za-z0-9-]{1,80}',key):raise HTTPException(400,'问答请求标识无效')
+ for old in list(CHAT_STREAMS):
+  if time.monotonic()-CHAT_STREAMS[old]['created']>600:CHAT_STREAMS.pop(old,None)
+ stream={'session':SESSION,'created':time.monotonic(),'first_delta':None,'events':[]};CHAT_STREAMS[key]=stream
+ stream['events'].append({'type':'status','text':'正在准备会议知识问答'})
+ env={**os.environ,'MEETINGBOX_KB_TOKEN':TOKEN,'MEETINGBOX_KB_SESSION':SESSION or ''}
+ proc=await asyncio.create_subprocess_exec(os.getenv('MEETINGBOX_NODE',r'C:\Program Files\nodejs\node.exe'),str(Path(__file__).parent/'pi-worker.mjs'),limit=1024*1024,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,env=env,**PROCESS_FLAGS)
+ result=None
+ async def consume():
+  nonlocal result
+  proc.stdin.write(json.dumps({'query':query,'history':p.get('history',[])[-4:]},ensure_ascii=False).encode());await proc.stdin.drain();proc.stdin.close()
+  while True:
+   line=await proc.stdout.readline()
+   if not line:break
+   event=json.loads(line)
+   if event.get('type')=='delta' and stream['first_delta'] is None:stream['first_delta']=time.monotonic()-stream['created']
+   if event.get('type')=='final':result=event['result']
+   elif len(stream['events'])<10000:stream['events'].append(event)
+  await proc.wait()
+ errors=asyncio.create_task(proc.stderr.read())
+ try:await asyncio.wait_for(consume(),480)
+ except BaseException:
+  if proc.returncode is None:proc.kill();await proc.wait()
+  await errors
+  raise
+ err=await errors
+ if proc.returncode or result is None:
   (ROOT/'last-pi-error.log').write_text(err.decode(errors='replace').replace(TOKEN,'[redacted]'),encoding='utf8')
-  raise HTTPException(502,'Pi助手处理失败，请查看本地服务日志')
- result=json.loads(out)
- (ROOT/'last-pi-audit.json').write_text(json.dumps({'time':stamp(),'harness':result.get('harness'),'retrieval':'server-presearch','source_event_ids':[e['id'] for e in evidence['results']],'agent_tools':[x['tool'] for x in result.get('trace',[])],'answer_characters':len(result.get('answer',''))},ensure_ascii=False),encoding='utf8')
- return {**result,'sources':result.get('sources') or evidence['results']}
+  raise HTTPException(502,'助手未完成处理，文件是否保存请查看会议文档')
+ stream['events'].append({'type':'done'})
+ (ROOT/'last-pi-audit.json').write_text(json.dumps({'time':stamp(),'harness':result.get('harness'),'stream_events':len(stream['events']),'first_delta_seconds':stream['first_delta'],'total_seconds':round(time.monotonic()-stream['created'],2),'agent_tools':[x['tool'] for x in result.get('trace',[])],'answer_characters':len(result.get('answer',''))},ensure_ascii=False),encoding='utf8')
+ return result
 
 async def tool_call(action,p):
  if action=='knowledgeSearch':return await search(p)
@@ -381,9 +409,17 @@ async def pi_llm(request:Request):
  if request.client.host not in ('127.0.0.1','::1') or request.headers.get('authorization')!='Bearer '+TOKEN:raise HTTPException(403,'Unauthorized')
  if not SESSION or not READY:raise HTTPException(409,'知识模式不可用')
  payload=await request.json();payload.update(model=MODEL,max_tokens=1600,temperature=0.1,chat_template_kwargs={'enable_thinking':False})
- async with LLM_LOCK,httpx.AsyncClient(timeout=360) as c:
+ async with httpx.AsyncClient(timeout=360) as c:
   check=await c.post(LLM+'/tokenize',json={'content':json.dumps(payload.get('messages',[]),ensure_ascii=False)});check.raise_for_status()
-  if len(check.json()['tokens'])>4900:raise HTTPException(413,'助手上下文过长，请新开问题')
+  if len(check.json()['tokens'])>4900:raise HTTPException(413,'助手上下文过长，请缩小问题范围')
+ if payload.get('stream'):
+  async def generate():
+   async with LLM_LOCK,httpx.AsyncClient(timeout=360) as client:
+    async with client.stream('POST',LLM+'/v1/chat/completions',json=payload) as response:
+     response.raise_for_status()
+     async for chunk in response.aiter_bytes():yield chunk
+  return StreamingResponse(generate(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+ async with LLM_LOCK,httpx.AsyncClient(timeout=360) as c:
   r=await c.post(LLM+'/v1/chat/completions',json=payload);r.raise_for_status()
   return Response(content=r.content,media_type=r.headers.get('content-type','application/json'))
 
@@ -412,6 +448,7 @@ async def rpc(request:Request):
   if key not in {r.get('speaker') or '发言人待识别' for r in m['transcripts']} or not name:raise HTTPException(400,'请填写有效发言人姓名或备注名称')
   with db() as c:c.execute('INSERT INTO voice_notes VALUES(?,?,?,?,?) ON CONFLICT(meeting_id,speaker_key) DO UPDATE SET name=excluded.name,note=excluded.note,updated_at=excluded.updated_at',(m['id'],key,name,str(p.get('note',''))[:1000],stamp()))
   return {'saved':True}
+ if action=='chat_poll':return chat_events(p)
  if action=='archive_list':return {'events':event_catalog()}
  if action=='audio_path':
   m=detail(p['meeting_id']);folder=Path(m.get('folder_path') or '')

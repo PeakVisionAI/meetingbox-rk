@@ -46,7 +46,7 @@ pub async fn knowledge_enter(state: State<'_,AppState>, password: String) -> Res
 #[tauri::command]
 pub async fn knowledge_request(action:String,payload:Value)->Result<Value,String>{
     crate::access_control::require_admin_authenticated()?;
-    let allowed=["status","meetings","detail","archive_draft","archive_save","archive_list","search","chat","document","speaker_save","speaker_list","document_read","document_export","document_open","document_list","document_import"];
+    let allowed=["status","meetings","detail","archive_draft","archive_save","archive_list","search","chat","chat_poll","document","speaker_save","speaker_list","document_read","document_export","document_open","document_list","document_import"];
     if !allowed.contains(&action.as_str()){return Err("不支持的知识操作".into());}
     let session=SESSION.lock().map_err(|_|"知识会话不可用")?.clone().ok_or("请先验证管理员密码")?;
     request(&action,payload,&session).await
