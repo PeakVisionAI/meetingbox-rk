@@ -121,6 +121,9 @@ class HttpTests(unittest.TestCase):
         })
         self.assertEqual(server.settings.max_sessions, 2)
         self.assertEqual(server.settings.max_pending_audio_s, 12.0)
+        # Matches the native 20 s wake window; vendor defaults are 5 s / 10 s.
+        self.assertEqual(server.settings.wake_timeout_s, 20.0)
+        self.assertEqual(server.settings.followup_window_s, 20.0)
 
     def test_feed_wire_fields_defaults_and_real_pcm_decoding(self):
         response = self.feed()
@@ -261,6 +264,28 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json(), {"ok": True, "existed": existed})
         self.assertEqual(self.front.resets, ["desktop", "desktop"])
+
+
+class KwsThreadTests(unittest.TestCase):
+    def test_default_and_override_reach_native_engine_without_changing_keywords(self):
+        for threads, expected in ((None, 1), ("2", 2)):
+            with self.subTest(threads=threads), patch.dict(os.environ, {}, clear=True):
+                if threads is not None:
+                    os.environ["MEETINGBOX_KWS_THREADS"] = threads
+                with patch.object(server.KwsEngine, "__init__", return_value=None) as constructor:
+                    server.MeetingboxKwsEngine("model", wake_words=["小峰小峰"], keywords_threshold=0.25)
+                constructor.assert_called_once_with(
+                    "model", wake_words=["小峰小峰"], keywords_threshold=0.25,
+                    num_threads=expected,
+                )
+
+    def test_invalid_thread_count_does_not_construct_engine(self):
+        for value in ("0", "5", "invalid"):
+            with self.subTest(value=value), patch.dict(os.environ, {"MEETINGBOX_KWS_THREADS": value}):
+                with patch.object(server.KwsEngine, "__init__", return_value=None) as constructor:
+                    with self.assertRaises(ValueError):
+                        server.MeetingboxKwsEngine("model", wake_words=["小峰小峰"])
+                constructor.assert_not_called()
 
 
 class PcmWavTests(unittest.TestCase):

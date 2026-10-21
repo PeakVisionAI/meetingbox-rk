@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -17,6 +17,7 @@ import { useTranscriptRecovery } from '@/hooks/useTranscriptRecovery';
 import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { useRecordingStateSync } from '@/hooks/useRecordingStateSync';
+import { useLiveTranscript } from '@/hooks/useLiveTranscript';
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { formatMinuteRange, SUMMARY_INTERVAL_SECONDS, useMinuteSummaries } from '@/hooks/useMinuteSummaries';
 
@@ -66,10 +67,20 @@ export default function Home() {
     templateId: quickMeetingTemplate,
   });
 
-  const liveSegments = transcripts.flatMap((item) => {
-    const parts = item.text.split(/(?=(?:候选发言人|发言人)[^：:\s]{1,20}[：:])/).filter(Boolean);
+  const recordingActive = recordingState.isRecording && !isStopping && !recordingState.isStopping && !recordingState.isProcessing && !recordingState.isSaving;
+  const maxEnd = useMemo(() => transcripts.reduce((end, item) => {
+    const audioEnd = item.audio_end_time;
+    return !item.is_partial && typeof audioEnd === 'number' && Number.isFinite(audioEnd)
+      ? Math.max(end, audioEnd)
+      : end;
+  }, -1), [transcripts]);
+  const { preview: livePreview, status: livePreviewStatus } = useLiveTranscript({ recordingActive, maxEnd });
+  const livePreviewUnavailable = livePreviewStatus === 'unavailable' || livePreviewStatus === 'error';
+
+  const liveSegments = useMemo(() => transcripts.flatMap((item) => {
+    const parts = item.text.split(/(?=(?:候选发言人|发言人\s*(?:待识别|\d+))[：:])/).filter(Boolean);
     return parts.map((part, index) => {
-      const match = part.match(/^((?:候选发言人|发言人)[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
+      const match = part.match(/^((?:候选发言人|发言人\s*(?:待识别|\d+)))[：:]\s*([\s\S]*)$/);
       return {
         id: `${item.id}-${index}`,
         timestamp: item.audio_start_time ?? item.chunk_start_time ?? 0,
@@ -79,7 +90,7 @@ export default function Home() {
         confidence: item.confidence,
       };
     });
-  });
+  }), [transcripts]);
   const speakerCount = new Set(liveSegments.map((item) => item.speakerLabel).filter(Boolean)).size;
   const speakerCountLabel = speakerCount > 0 ? `${speakerCount} 个` : (transcripts.length > 0 ? '待识别' : '0 个');
 
@@ -90,7 +101,10 @@ export default function Home() {
     return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}  ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   };
 
-  const requestStopConfirmation = async () => new Promise<boolean>((resolve) => {
+  // Manual stop keeps the confirmation dialog. Voice stop is confirmed by the
+  // speaker instead and reaches RecordingControls directly, which is why the
+  // dialog promise is only created for a manual click.
+  const requestStopConfirmation = () => new Promise<boolean>((resolve) => {
     stopResolverRef.current = resolve;
     setStopConfirmOpen(true);
   });
@@ -210,11 +224,26 @@ export default function Home() {
           <div className="hyos-live-grid">
             <div className="hyos-transcript-pane">
               <div className="hyos-pane-title"><div className="hyos-pane-title-main"><span>逐字稿</span><em className="hyos-transcript-mode">精选发言人</em></div><em>{transcripts.length}段</em></div>
-              <div className="hyos-transcript-virtual">
-                {liveSegments.length === 0 ? (
-                  <div className="hyos-live-empty-transcript"><i /><strong>等待语音转写</strong><span>开始发言后，逐字稿会显示在这里</span></div>
-                ) : (
-                  <VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} />
+              <div className="hyos-transcript-virtual flex flex-col overflow-hidden">
+                <div className="min-h-0 flex-1 [&>div>.shrink-0]:hidden">
+                  {liveSegments.length > 0 ? (
+                    <VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} />
+                  ) : !livePreview ? (
+                    <div className="hyos-live-empty-transcript"><i /><strong>等待语音转写</strong><span>开始发言后，逐字稿会显示在这里</span></div>
+                  ) : null}
+                </div>
+                {livePreview && (
+                  <div className="flex-none border-t border-blue-100 bg-blue-50/60 px-4 py-3" role="status" aria-live="polite" aria-atomic="true">
+                    <div className="mb-1 flex items-center gap-2 text-xs text-blue-700">
+                      <span>实时预览</span>
+                      <time className="text-gray-500">{formatClock(livePreview.start_time)}</time>
+                      <span className="text-gray-500">{livePreview.is_final ? '等待确认' : '转写中'}</span>
+                    </div>
+                    <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">{livePreview.text}</p>
+                  </div>
+                )}
+                {livePreviewUnavailable && (
+                  <p className="flex-none border-t border-gray-100 px-4 py-2 text-xs text-gray-500" role="status">实时预览暂不可用，逐字稿仍会正常生成。</p>
                 )}
               </div>
             </div>
@@ -246,7 +275,7 @@ export default function Home() {
               </div>
             </aside>
           </div>
-          <div className="hyos-live-controls"><RecordingControls isRecording={recordingState.isRecording} isPaused={recordingState.isPaused} hasSpeech={recordingState.speechActive} onRecordingStop={(callApi = true, speakerCalibration) => handleRecordingStop(callApi, speakerCalibration)} onRecordingStart={() => startMeeting(meetingTitle)} onTranscriptReceived={() => {}} onStopInitiated={() => setIsStopping(true)} onBeforeStop={requestStopConfirmation} barHeights={['6px', '12px', '18px', '10px', '16px', '8px', '20px', '14px', '9px', '16px', '7px', '13px', '18px', '11px', '8px']} recordingDuration={formatClock(recordingState.activeDuration)} onTranscriptionError={(message) => toast.error(message)} isRecordingDisabled={isRecordingDisabled} isParentProcessing={isStopping} selectedDevices={selectedDevices} meetingName={meetingTitle} /></div>
+          <div className="hyos-live-controls"><RecordingControls isRecording={recordingState.isRecording} isPaused={recordingState.isPaused} hasSpeech={recordingState.speechActive} onRecordingStop={(callApi = true, speakerCalibration) => handleRecordingStop(callApi, speakerCalibration)} onRecordingStart={() => startMeeting(meetingTitle)} onTranscriptReceived={() => {}} onStopInitiated={() => setIsStopping(true)} onStopRejected={() => setIsStopping(false)} onBeforeStop={requestStopConfirmation} barHeights={['6px', '12px', '18px', '10px', '16px', '8px', '20px', '14px', '9px', '16px', '7px', '13px', '18px', '11px', '8px']} recordingDuration={formatClock(recordingState.activeDuration)} onTranscriptionError={(message) => toast.error(message)} isRecordingDisabled={isRecordingDisabled} isParentProcessing={isStopping} selectedDevices={selectedDevices} meetingName={meetingTitle} /></div>
         </section>
       )}
 

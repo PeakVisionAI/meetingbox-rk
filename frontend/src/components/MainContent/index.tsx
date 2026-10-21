@@ -30,8 +30,10 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   const [powerMenuOpen, setPowerMenuOpen] = useState(false);
   const [pendingPowerAction, setPendingPowerAction] = useState<PowerAction | null>(null);
   const isHomeRef = useRef(isHome);
+  const isMeetingActiveRef = useRef(isMeetingActive);
   recordingActiveRef.current = recordingActive;
   isHomeRef.current = isHome;
+  isMeetingActiveRef.current = isMeetingActive;
 
   const openSettings = () => {
     if (recordingActive) {
@@ -42,6 +44,10 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   };
 
   const runPowerAction = async (action: PowerAction) => {
+    if (recordingActiveRef.current) {
+      toast.info('会议录制或保存中，请等待完成后再执行电源操作');
+      return;
+    }
     setPendingPowerAction(action);
     try {
       await invoke('system_power_action', { action });
@@ -64,11 +70,39 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
 
   useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
+    const unlisteners: (() => void)[] = [];
+    let controlsReady = false;
+    let pendingStop: { session_id: string } | null = null;
+    let stopTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const clearPendingStop = () => {
+      pendingStop = null;
+      if (stopTimeout !== null) clearTimeout(stopTimeout);
+      stopTimeout = null;
+    };
+    const deliverPendingStop = () => {
+      if (cancelled || !isHomeRef.current || !controlsReady || !pendingStop) return;
+      const request = pendingStop;
+      clearPendingStop();
+      window.dispatchEvent(new CustomEvent('end-meeting-by-voice', { detail: request }));
+    };
+    const handleControlsReady = (event: Event) => {
+      controlsReady = (event as CustomEvent<boolean>).detail === true;
+      deliverPendingStop();
+    };
+
+    // Readiness comes from the child after its voice-stop listener is installed
+    // and the live view (recording state) is mounted. A parent render is not
+    // sufficient, so a pending stop cannot fire before the bridge exists.
+    window.addEventListener('recording-controls-ready', handleControlsReady);
+    window.dispatchEvent(new CustomEvent('request-recording-controls-ready'));
+    // Legacy latch from the previous route handoff; the stop intent now lives in
+    // memory only, scoped to the native session id.
+    sessionStorage.removeItem('autoStopRecording');
 
     const setup = async () => {
       try {
-        const stop = await listen('request-start-recording', () => {
+        const start = await listen('request-start-recording', () => {
           if (cancelled) return;
           if (recordingActiveRef.current) {
             sessionStorage.removeItem('autoStartRecording');
@@ -85,19 +119,48 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
           router.push('/');
         });
         if (cancelled) {
-          stop();
+          start();
           return;
         }
-        unlisten = stop;
+        unlisteners.push(start);
       } catch (error) {
         console.warn('[MainContent] Tray start listener unavailable:', error);
+      }
+      try {
+        // The speaker already confirmed the stop command, so no dialog is
+        // raised; RecordingControls runs the existing save flow directly.
+        const stopRecording = await listen<{ session_id: string }>('request-stop-recording', ({ payload }) => {
+          if (cancelled || typeof payload?.session_id !== 'string' || !payload.session_id) return;
+          // Deduplicate only the queued request; a deliberate later wake+stop
+          // for the same running meeting must still be honored.
+          if (pendingStop?.session_id === payload.session_id) return;
+          // Without a live meeting session there is nothing to end; a stale
+          // event must not navigate or stop a later recording.
+          if (!recordingActiveRef.current && !isMeetingActiveRef.current) return;
+          clearPendingStop();
+          pendingStop = { session_id: payload.session_id };
+          // Pending state is dropped after a short window so it can never
+          // outlive the request and affect a different meeting.
+          stopTimeout = setTimeout(clearPendingStop, 8000);
+          if (!isHomeRef.current) router.push('/');
+          deliverPendingStop();
+        });
+        if (cancelled) {
+          stopRecording();
+          return;
+        }
+        unlisteners.push(stopRecording);
+      } catch (error) {
+        console.warn('[MainContent] Voice stop listener unavailable:', error);
       }
     };
 
     void setup();
     return () => {
       cancelled = true;
-      unlisten?.();
+      clearPendingStop();
+      window.removeEventListener('recording-controls-ready', handleControlsReady);
+      unlisteners.forEach((unlisten) => unlisten());
     };
   }, [router]);
 
@@ -127,8 +190,8 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
           <section className="hyos-power-dialog" role="dialog" aria-modal="true" aria-labelledby="power-dialog-title" aria-describedby="power-dialog-description">
             <header><h2 id="power-dialog-title">电源选项</h2><p id="power-dialog-description">选择要执行的操作</p></header>
             <div className="hyos-power-options">
-              <button onClick={() => void runPowerAction('reboot')} disabled={pendingPowerAction !== null}><span className="reboot"><RotateCcw size={31} /></span><b>{pendingPowerAction === 'reboot' ? '正在重启' : '重启'}</b></button>
-              <button onClick={() => void runPowerAction('poweroff')} disabled={pendingPowerAction !== null}><span className="poweroff"><Power size={31} /></span><b>{pendingPowerAction === 'poweroff' ? '正在关机' : '关机'}</b></button>
+              <button onClick={() => void runPowerAction('reboot')} disabled={pendingPowerAction !== null || recordingActive}><span className="reboot"><RotateCcw size={31} /></span><b>{pendingPowerAction === 'reboot' ? '正在重启' : '重启'}</b></button>
+              <button onClick={() => void runPowerAction('poweroff')} disabled={pendingPowerAction !== null || recordingActive}><span className="poweroff"><Power size={31} /></span><b>{pendingPowerAction === 'poweroff' ? '正在关机' : '关机'}</b></button>
             </div>
             <button className="hyos-power-cancel" onClick={() => setPowerMenuOpen(false)} disabled={pendingPowerAction !== null}>取消</button>
           </section>

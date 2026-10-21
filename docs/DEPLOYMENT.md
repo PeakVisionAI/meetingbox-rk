@@ -19,6 +19,8 @@
 
 当前默认的本地服务地址和职责见 [RK 部署与验收基线](./RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md)。应用不会替代或自动安装这些 RK 服务和模型。
 
+边说边更新的字幕使用独立的 [流式字幕预览服务](../services/live-asr/README.md)。桌面启动环境设置 `MEETINGBOX_ASR_BACKEND=rk`、`MEETINGBOX_RK_ASR_URL=http://127.0.0.1:8020`、`MEETINGBOX_STREAM_ASR_URL=http://127.0.0.1:8002`。8020/8030 提供保存用逐字稿、会议中的候选发言人和结束后的说话人校准；8002 只提供临时累计字幕，不写入会议数据库。替换已有文件识别 worker 时，先停止并禁用文件 worker，再启动 `services/live-asr/meetingbox-live-asr.service`，避免在 8GiB 盒子上同时加载两套 PyTorch 模型。唤醒继续使用 8021，与字幕服务分开管理。
+
 ## 2. 目标机检查
 
 在目标设备本地或通过 SSH 执行：

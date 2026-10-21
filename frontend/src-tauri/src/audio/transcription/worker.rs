@@ -74,6 +74,8 @@ pub struct TranscriptUpdate {
 pub fn start_transcription_task<R: Runtime>(
     app: AppHandle<R>,
     transcription_receiver: tokio::sync::mpsc::UnboundedReceiver<AudioChunk>,
+    recording_session: String,
+    correction_folder: Option<std::path::PathBuf>,
 ) -> super::task::TranscriptionTask {
     let cancellation = tokio_util::sync::CancellationToken::new();
     let dispatcher_cancellation = cancellation.clone();
@@ -126,8 +128,13 @@ pub fn start_transcription_task<R: Runtime>(
             let chunks_queued_clone = chunks_queued.clone();
 
             let worker_cancellation = dispatcher_cancellation.clone();
+            let correction_session = recording_session.clone();
+            let correction_folder = correction_folder.clone();
             let worker_handle = tokio::spawn(async move {
                 super::task::run_until_cancelled(worker_cancellation, async {
+                    let mut corrector = super::correction::Corrector::new(
+                        correction_session, correction_folder, super::correction::CorrectionConfig::default(),
+                    );
                     info!("👷 Worker {} started", worker_id);
 
                     // PRE-VALIDATE model state to avoid repeated async calls per chunk
@@ -240,6 +247,17 @@ pub fn start_transcription_task<R: Runtime>(
                                             let sequence_id = SEQUENCE_COUNTER.fetch_add(1, Ordering::SeqCst);
                                             let audio_start_time = chunk_timestamp; // Already in seconds from recording start
                                             let audio_end_time = chunk_timestamp + chunk_duration;
+                                            let timestamp = format_current_timestamp();
+                                            let transcript = if is_partial {
+                                                transcript
+                                            } else {
+                                                let pending = chunks_queued_clone.load(Ordering::SeqCst)
+                                                    .saturating_sub(chunks_completed_clone.load(Ordering::SeqCst))
+                                                    .saturating_sub(1);
+                                                corrector.correct(super::correction::Segment::new(
+                                                    sequence_id, &transcript, audio_start_time, audio_end_time, &timestamp,
+                                                ), pending).await
+                                            };
 
                                             // Save structured transcript segment to recording manager (only final results)
                                             // Save ALL segments (partial and final) to ensure complete JSON
@@ -252,7 +270,7 @@ pub fn start_transcription_task<R: Runtime>(
 
                                             let update = TranscriptUpdate {
                                                 text: transcript,
-                                                timestamp: format_current_timestamp(), // Wall-clock for reference
+                                                timestamp, // Preserve ASR finalization time across correction
                                                 source: "Audio".to_string(),
                                                 sequence_id,
                                                 chunk_start_time: chunk_timestamp, // Legacy compatibility

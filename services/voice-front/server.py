@@ -22,9 +22,25 @@ sys.path.insert(0, str(Path(__file__).parent / "vendor"))
 from voice_front.router import decode_chunk
 from voice_front.service import VoiceFront, VoiceFrontError
 from voice_front.settings import VoiceFrontSettings
+from voice_front.kws import KwsEngine
+import voice_front.service as voice_service
+
+
+class MeetingboxKwsEngine(KwsEngine):
+    def __init__(self, *args, **kwargs):
+        threads = int(os.environ.get("MEETINGBOX_KWS_THREADS", "1"))
+        if not 1 <= threads <= 4:
+            raise ValueError("MEETINGBOX_KWS_THREADS must be between 1 and 4")
+        kwargs["num_threads"] = threads
+        super().__init__(*args, **kwargs)
+
+
+# Keep the pinned vendor files intact; limit KWS workers in this adapter.
+voice_service.KwsEngine = MeetingboxKwsEngine
 
 ASR_URL = os.environ.get("MEETINGBOX_RK_ASR_URL", "http://127.0.0.1:8020").rstrip("/")
-settings = replace(VoiceFrontSettings.from_env(), max_utterance_s=10.0,
+settings = replace(VoiceFrontSettings.from_env(), wake_timeout_s=20.0,
+                   followup_window_s=20.0, max_utterance_s=10.0,
                    max_pending_audio_s=12.0, max_sessions=2)
 
 
