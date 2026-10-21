@@ -22,9 +22,11 @@ pub mod stream;
 pub mod recording_manager;
 pub mod recording_commands;
 pub mod wake_listener;
+pub(crate) mod live_transcript;
 pub(crate) mod wake_policy;
 pub mod recording_preferences;
 pub mod recording_saver;
+pub(crate) mod transcript_sink;
 pub mod incremental_saver;  // NEW: Incremental audio saving with checkpoints
 pub mod level_monitor;
 pub mod simple_level_monitor;

@@ -4,7 +4,7 @@
 
 本适配使用 BossAI-ASR 的独立 Python FunASR 服务，通过 HTTP 复用文件识别能力。meetingbox 保留 Rust 音频采集、混音、重采样、Silero VAD、Tauri 事件、SQLite 和录音保存。无需启动 BossAI 的 Node 服务、Web 前端、账号或会议 Agent。
 
-已适配的路径：实时录音产生的语音片段、音频文件导入、会后重新转写。实时路径仍然是 VAD 切句后识别，返回完整句子；未实现边说边更新的 Paraformer 流式字幕。另已接入 Linux 待机唤醒，见 [语音唤醒服务与部署](../services/voice-front/README.md)：复用 BossAI VoiceFront KWS/VAD，唤醒后收到“开始会议”等明确指令才开始录音。会议中暂停监听，提示采用界面和短提示音，未引入 TTS。
+已适配的路径：实时录音产生的语音片段、音频文件导入、会后重新转写。实时路径由两部分组成：保存用的逐字稿仍由 RK 服务的 2 秒语音窗口识别（含候选发言人标签和会后声纹校准）；界面上的边说边更新字幕由本机的 Paraformer 流式服务提供，见 [流式字幕预览](../services/live-asr/README.md)。另已接入 Linux 待机唤醒，见 [语音唤醒服务与部署](../services/voice-front/README.md)：复用 BossAI VoiceFront KWS/VAD，唤醒后收到“开始会议”等明确指令才开始录音。会议中继续监听以便说“结束会议”，但会议内唤醒只做界面提示，不发出提示音，避免进入会议音频。
 
 事实依据：BossAI-ASR `main` 提交 `3fd94abdd`，`asr_server/server.py` 的 `/health`、`/asr/transcribe-file`；meetingbox 基线 `b3a3bda`。外部接口和依赖升级后应重新做兼容验证。
 
@@ -16,6 +16,8 @@
 | --- | --- | --- |
 | `MEETINGBOX_ASR_BACKEND` | `rk` | `rk` 使用现有 RK 服务；`bossai` 使用 FunASR 文件接口；`rk-npu` 启用严格 NPU 优先策略 |
 | `MEETINGBOX_BOSSAI_ASR_URL` | `http://127.0.0.1:8002` | BossAI sidecar 根地址；允许 HTTP(S)，禁止 URL 中嵌入凭据、query 或 fragment |
+| `MEETINGBOX_RK_ASR_URL` | `http://127.0.0.1:8020` | 保存用逐字稿与说话人服务地址 |
+| `MEETINGBOX_STREAM_ASR_URL` | 未设置 | 流式预览服务地址；未设置时不启用边说边更新字幕，会议其他功能不变 |
 
 仍在应用设置中选择 **RK ASR**。该选项是现有设备侧服务入口，环境变量指定其实际后端；本次不增加界面选项或数据库迁移。启动日志会记录实际使用的 `BossAI FunASR`。环境变量需在启动 Tauri 进程前设置，修改后重启应用；本项目不自动加载 `.env`。
 
@@ -26,7 +28,7 @@ MEETINGBOX_BOSSAI_ASR_URL=http://127.0.0.1:8002 \
 pnpm tauri:dev:cpu
 ```
 
-生产进程也应设置相同环境变量。恢复 RK 路径时设置 `MEETINGBOX_ASR_BACKEND=rk` 后重启。
+生产进程也应设置相同环境变量。保存用逐字稿使用 `MEETINGBOX_ASR_BACKEND=rk`（默认值），边说边更新字幕另设 `MEETINGBOX_STREAM_ASR_URL`，二者互不影响。流式预览是临时显示，不写入逐字稿数据库，会议保存仍以 RK 结果为准。
 
 请求契约：
 
@@ -55,9 +57,11 @@ POST /asr/transcribe-file
 
 ## sidecar 部署
 
+RK3588 的会议模式使用 [流式字幕 worker](../services/live-asr/README.md) 只加载 Paraformer online，文件 worker 停止并取消自启动；保存用识别和说话人校准使用 8020/8030。流式模型与文件模型共同加载曾耗尽盒子内存，生产部署不要开启 `BOSSAI_ASR_PRELOAD_FILE=1`。
+
 优先使用 BossAI 已准备并校验的 CPU Python 环境、模型缓存、平台 wheelhouse 和锁文件。部署细节见其 `docs/local-model-components.md`、`docs/asr-realtime.md` 和 `docs/local-components-hardware-matrix.md`。基础依赖在 `asr_server/requirements.txt`；生产环境应按对应平台的锁文件安装，而不是直接安装不固定版本的依赖。
 
-以下示例假设 Python 环境和模型缓存已准备好；替换绝对路径与环境 ID：
+以下文件识别示例适用于选择 `MEETINGBOX_ASR_BACKEND=bossai` 的独立文件 worker；盒子会议模式使用上述流式 wrapper，不同时运行此示例：
 
 ```bash
 env \
@@ -66,10 +70,10 @@ env \
   BOSSAI_ASR_MODEL_DIR=/absolute/data/models/voice \
   MODELSCOPE_CACHE=/absolute/data/models/voice/modelscope \
   FUNASR_HUB=ms FUNASR_DEVICE=cpu \
-  FUNASR_MODEL=paraformer-zh-streaming \
+  FUNASR_MODEL=iic/SenseVoiceSmall \
   FUNASR_FILE_MODEL=iic/SenseVoiceSmall \
-  FUNASR_MODE=streaming FUNASR_ENABLE_SPEAKER=0 \
-  BOSSAI_ASR_PRELOAD=1 BOSSAI_ASR_PRELOAD_FILE=1 \
+  FUNASR_MODE=offline FUNASR_ENABLE_SPEAKER=0 \
+  BOSSAI_ASR_PRELOAD=0 BOSSAI_ASR_PRELOAD_FILE=0 \
   BOSSAI_VOICE_FRONT=0 BOSSAI_VOICE_TTS=0 \
   OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 NUMEXPR_NUM_THREADS=4 \
   TOKENIZERS_PARALLELISM=false \
@@ -77,7 +81,7 @@ env \
   /absolute/BossAI-ASR/asr_server/server.py
 ```
 
-关闭 voice front/TTS 可避免加载本次不用的模型。主 streaming 引擎仍会按 sidecar 现有设计预加载；文件引擎始终启用 speaker，`FUNASR_ENABLE_SPEAKER=0` 不能关闭它。这些额外模型的内存消耗需在设备上测量。
+关闭 voice front/TTS 可避免加载本次不用的模型。文件 worker 此示例不预加载主引擎，首次文件请求加载文件引擎；文件引擎始终启用 speaker，`FUNASR_ENABLE_SPEAKER=0` 不能关闭它。盒子会议模式的流式 wrapper 关闭文件路由以避免第二套模型被意外加载。
 
 服务入口默认监听 loopback，接口没有认证。建议与 meetingbox 部署在同机；若配置远端地址，应在实际部署中提供受控网络或认证网关，不能把该服务直接暴露到公网。
 
@@ -103,7 +107,7 @@ BossAI 当前服务使用 FunASR/PyTorch CPU，不能直接获得 RK3588 NPU 加
 
 | 组件 | 接口/实现 | 接入前必须处理 |
 | --- | --- | --- |
-| Paraformer 流式 ASR | `/asr/transcribe` | session_id、chunk_index、累计正文去重、final/autoFinal 和停止时 flush |
+| Paraformer 流式 ASR | `/asr/transcribe` | 已由 [流式字幕预览](../services/live-asr/README.md) 接入：独立进程只加载流式模型，session_id、chunk_index、累计正文替换、final/autoFinal 和停止时 flush 均按该服务契约处理 |
 | Silero VAD/唤醒/打断 | `/voice/feed`、`/voice/reset` | 200ms 音频块、seq、延迟返回事件和停止后的结果收尾；避免双重 VAD |
 | Piper TTS | `/voice/tts/synthesize` | 输出 22050Hz WAV、播放路由及音色授权；当前会议录音无需 TTS |
 | 整场说话人 | `/asr/transcribe-file` 的 speaker segments | 单次整场推理、可空时间戳、内存边界、不能把不同请求标签直接合并 |
@@ -125,7 +129,7 @@ cargo test -p meetily audio::transcription
 cargo check --locked -p meetily
 ```
 
-2026-10-14 本机验证：独立适配测试 20 项通过；变更中的 Rust 模块已做语法解析和 diff 检查。完整应用 `cargo check --locked --offline -p meetily` 未通过，原因是本机缺少 `ffmpeg-sidecar` Git 依赖缓存；磁盘空间不足，未继续获取完整 Tauri/Whisper 原生构建环境。未运行真实模型、桌面录音或 RK3588 验收。
+2026-10-14 盒子验证：62 项 Rust 适配/预览协议测试、14 项原识别服务测试、6 项流式 wrapper 测试通过；TypeScript 检查、Next.js 构建和 ARM64 Tauri Release 打包通过。0.4.14 已安装，原有 8 场会议及凭据/许可证保留。两分钟实际客户端回放验证累计字幕、暂停恢复、语音结束保存和会后说话人校准；最后预览延迟约 0.80 秒、最大约 2.04 秒。详细限制与证据见 [流式字幕服务](../services/live-asr/README.md)。
 
 目标 RK 设备还须测试真实麦克风、静音、短句、低音量、两人交替发言、导入、重新转写及不少于 10 分钟会议。记录识别错误率、首句延迟、RTF、RSS/Swap、队列积压、停止耗时及原始录音完整性。当前实现和协议测试不能替代模型或 RK 硬件验收。
 

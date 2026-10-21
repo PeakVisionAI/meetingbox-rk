@@ -550,6 +550,16 @@ impl TranscriptionProvider for RkAsrProvider {
         if self.npu_policy.is_some() {
             return self.transcribe_npu(audio, language).await;
         }
+        // Preserve short final speech windows. Pad only the provider upload so
+        // worker timestamps and saved transcript duration retain the real audio length.
+        if audio.len() < 1600 {
+            return Err(TranscriptionError::AudioTooShort {
+                samples: audio.len(),
+                minimum: 1600,
+            });
+        }
+        let mut audio = audio;
+        audio.resize(audio.len().max(MINIMUM_SAMPLES), 0.0);
         self.transcribe_rk(audio).await
     }
 
@@ -834,6 +844,25 @@ mod tests {
             .unwrap(),
         );
         provider
+    }
+
+    #[tokio::test]
+    async fn legacy_short_tail_is_uploaded_with_padding_and_speaker_text() {
+        let _guard = SESSION_TEST_LOCK.lock().unwrap();
+        let (url, requests) = mock_service(vec![
+            ("200 OK", r#"{"segments":[{"text":"最后一句","speaker":"发言人 2","speaker_id":2}]}"#),
+        ]).await;
+        let provider = RkAsrProvider::new(&url).unwrap();
+        let result = provider.transcribe(vec![0.25; 3200], None).await.unwrap();
+        assert!(result.text.contains("最后一句"));
+        assert!(result.text.contains("发言人 2"));
+        let mut padded = vec![0.25; 3200];
+        padded.resize(MINIMUM_SAMPLES, 0.0);
+        let expected = encode_pcm16_wav(&prepare_asr_audio(&padded));
+        let requests = requests.await.unwrap();
+        assert!(requests[0].windows(expected.len()).any(|bytes| bytes == expected));
+        assert!(matches!(provider.transcribe(vec![0.25; 800], None).await,
+            Err(TranscriptionError::AudioTooShort { .. })));
     }
 
     #[tokio::test]

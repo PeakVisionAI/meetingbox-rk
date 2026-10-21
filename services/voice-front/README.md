@@ -1,6 +1,6 @@
 # BossAI 语音唤醒复用
 
-复用 BossAI-ASR 的 VoiceFront、Zipformer KWS 和 Silero VAD。在 Linux 桌面待机时监听物理麦克风，默认说“小峰小峰”，听到提示后说“开始会议”或“开始录音”。只有完整识别的白名单指令才能触发既有会议开始流程。会议录音期间暂停唤醒监听；停止后恢复。暂不提供会议中的语音停止或屏幕电源唤醒。
+复用 BossAI-ASR 的 VoiceFront、Zipformer KWS 和 Silero VAD。在 Linux 桌面待机时监听物理麦克风，默认说“小峰小峰”，听到提示后说“开始会议”或“开始录音”。会议录音期间同一采集继续运行，唤醒后说“结束会议”“结束录音”“停止会议”“停止录音”或“结束本次会议”可直接结束并保存会议；仅识别到完整句子才触发，讨论中的相同词不算。未唤醒时说的任何话都不会触发。暂不提供会议中暂停、屏幕电源或设置的语音控制。
 
 `vendor/PROVENANCE.json` 记录未经修改的 BossAI 源码版本和 SHA-256。上游 checkout 未提供项目根源码许可证，不能把其中模型的 Apache/MIT 许可证当作 BossAI 源码许可证。后续公开分发前需确认该源码的授权条款。
 
@@ -27,7 +27,7 @@ HTTP 仅监听 `127.0.0.1:8021`，沿用 `/voice/health`、`/voice/feed` 和 `/v
 
 ## 桌面
 
-启动桌面时设置 `MEETINGBOX_WAKE_ENABLED=1`、`MEETINGBOX_VOICE_URL=http://127.0.0.1:8021`。`MEETINGBOX_WAKE_SOURCE` 可指定 PulseAudio 的物理麦克风 source。系统需安装 `parec`（Ubuntu 的 pulseaudio-utils）。桌面管理采集子进程，录音开始前关闭并等待其退出；禁用、失败、退出时也释放采集。待机音频不会落盘。界面可以关闭监听，状态会区分待机、等待指令、录音暂停和服务故障。
+启动桌面时设置 `MEETINGBOX_WAKE_ENABLED=1`、`MEETINGBOX_VOICE_URL=http://127.0.0.1:8021`。`MEETINGBOX_WAKE_SOURCE` 可指定 PulseAudio 的物理麦克风 source；未指定时优先选择 USB 会议麦克风，再回退板载输入。系统需安装 `parec`（Ubuntu 的 pulseaudio-utils）。桌面管理采集子进程，禁用、失败和退出时释放采集。录音期间保持同一个采集进程，只在切换待机/会议上下文时复位唤醒窗口，避免重复打开麦克风。待机音频不会落盘。界面可以关闭监听，状态会区分待机、等待指令、会议中、结束处理中和服务故障。
 
 服务与桌面分别自启。仅服务自启不会采集麦克风；桌面启用监听后才创建采集进程。默认未配置环境变量的安装不启用监听。
 

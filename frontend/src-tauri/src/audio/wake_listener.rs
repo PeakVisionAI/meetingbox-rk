@@ -1,4 +1,4 @@
-//! Linux idle-only capture. The capture task exclusively owns and reaps parec.
+//! Linux voice capture for starting and ending meetings. Owns and reaps parec.
 use serde::Serialize;
 use std::sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, RwLock};
 use tauri::{AppHandle, Emitter, Runtime};
@@ -10,11 +10,16 @@ pub struct VoiceWakeStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub wake_word: String,
+    pub context: String,
 }
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
-static SUSPENSIONS: AtomicUsize = AtomicUsize::new(0);
 static EXITING: AtomicBool = AtomicBool::new(false);
+static MICROPHONE_REVISION: AtomicUsize = AtomicUsize::new(0);
+
+pub fn microphone_changed() {
+    MICROPHONE_REVISION.fetch_add(1, Ordering::SeqCst);
+}
 static STATUS: RwLock<Option<VoiceWakeStatus>> = RwLock::new(None);
 
 pub fn status() -> VoiceWakeStatus {
@@ -22,21 +27,35 @@ pub fn status() -> VoiceWakeStatus {
         enabled: false,
         state: "disabled".into(),
         detail: Some(if cfg!(target_os = "linux") {
-            "需要显式启用空闲语音唤醒；会议期间暂停监听".into()
+            "需要显式启用空闲语音唤醒；会议中可语音结束会议".into()
         } else {
             "原生空闲语音唤醒仅支持 Linux".into()
         }),
         wake_word: "小峰小峰".into(),
+        context: voice_context().as_str().into(),
     })
 }
 
 fn publish<R: Runtime>(app: &AppHandle<R>, state: &str, detail: Option<&str>) {
     let mut current = status();
-    current.enabled = ENABLED.load(Ordering::SeqCst);
-    if current.state != state || current.enabled != ENABLED.load(Ordering::SeqCst) {
-        log::info!("Idle voice wake state={} enabled={}", state, ENABLED.load(Ordering::SeqCst));
+    let context = if state == "paused" {
+        super::wake_policy::WakeContext::Transition
+    } else {
+        voice_context()
+    };
+    if current.state != state || current.enabled != ENABLED.load(Ordering::SeqCst)
+        || current.context != context.as_str() {
+        // Fault states are the hard ones to diagnose in the field, so log why.
+        if matches!(state, "error" | "unavailable") {
+            log::warn!("Idle voice wake state={} enabled={} detail={:?}",
+                state, ENABLED.load(Ordering::SeqCst), detail);
+        } else {
+            log::info!("Idle voice wake state={} enabled={}", state, ENABLED.load(Ordering::SeqCst));
+        }
     }
+    current.enabled = ENABLED.load(Ordering::SeqCst);
     current.state = state.into();
+    current.context = context.as_str().into();
     current.detail = detail.map(str::to_owned);
     *STATUS.write().unwrap() = Some(current.clone());
     let _ = app.emit("voice-wake-status", current);
@@ -45,24 +64,65 @@ fn publish<R: Runtime>(app: &AppHandle<R>, state: &str, detail: Option<&str>) {
 fn event<R: Runtime>(app: &AppHandle<R>, kind: &str, detail: &str) {
     let _ = app.emit("voice-wake-event", serde_json::json!({
         "type": kind, "detail": detail, "wake_word": status().wake_word,
+        "context": voice_context().as_str(),
     }));
 }
 
-/// Held from before device acquisition through complete recording cleanup.
-/// Drop also resumes after any early return or cancelled start future.
-pub struct RecordingSuspension;
-impl Drop for RecordingSuspension {
-    fn drop(&mut self) {
-        SUSPENSIONS.fetch_sub(1, Ordering::SeqCst);
+/// A running meeting keeps the same capture open instead of stopping it, so the
+/// meeting itself can be ended by voice.
+///
+/// This is an explicit signal rather than a read of the recording flag: that
+/// flag flips only after device setup and model validation, and the gap in
+/// between would tear the capture down and rebuild it for no reason.
+static MEETING_ACTIVE: AtomicBool = AtomicBool::new(false);
+static MEETING_STOPPING: AtomicBool = AtomicBool::new(false);
+
+fn voice_context() -> super::wake_policy::WakeContext {
+    use super::wake_policy::WakeContext;
+    if MEETING_STOPPING.load(Ordering::SeqCst) {
+        WakeContext::Transition
+    } else if meeting_active() {
+        if super::recording_commands::recording_active() {
+            WakeContext::Meeting
+        } else {
+            WakeContext::Transition
+        }
+    } else {
+        WakeContext::Idle
     }
 }
 
-pub async fn suspend_for_recording() -> RecordingSuspension {
-    SUSPENSIONS.fetch_add(1, Ordering::SeqCst);
-    let guard = RecordingSuspension;
-    #[cfg(target_os = "linux")]
-    linux::stop_capture().await;
-    guard
+pub struct MeetingStop;
+
+impl Drop for MeetingStop {
+    fn drop(&mut self) {
+        MEETING_STOPPING.store(false, Ordering::SeqCst);
+    }
+}
+
+pub fn meeting_stopping() -> MeetingStop {
+    MEETING_STOPPING.store(true, Ordering::SeqCst);
+    MeetingStop
+}
+
+/// Held for as long as a meeting is starting or running. Dropping it (including
+/// on any early return from the start path) hands the capture back to the idle
+/// policy, so the flag can never be left set.
+pub struct MeetingVoice;
+
+impl Drop for MeetingVoice {
+    fn drop(&mut self) {
+        MEETING_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
+pub fn meeting_started() -> MeetingVoice {
+    MEETING_ACTIVE.store(true, Ordering::SeqCst);
+    MeetingVoice
+}
+
+fn meeting_active() -> bool {
+    MEETING_ACTIVE.load(Ordering::SeqCst)
 }
 
 pub fn start<R: Runtime>(app: AppHandle<R>) {
@@ -80,7 +140,7 @@ pub fn start<R: Runtime>(app: AppHandle<R>) {
 pub async fn set_enabled<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> VoiceWakeStatus {
     #[cfg(target_os = "linux")]
     {
-        // The same lock serializes enable/disable, recording suspension and restart.
+        // The same lock serializes enable/disable and capture restart.
         let mut control = linux::CONTROL.lock().await;
         ENABLED.store(enabled && !EXITING.load(Ordering::SeqCst), Ordering::SeqCst);
         linux::stop_locked(&mut control).await;
@@ -106,6 +166,7 @@ pub async fn shutdown() {
 mod linux {
     use super::*;
     use super::super::{transcription::rk_policy, wake_policy::WakeWindow};
+    use crate::audio::recording_preferences::load_recording_preferences;
     use serde::Deserialize;
     use std::{process::Stdio, time::{Duration, Instant}};
     use tokio::{io::AsyncReadExt, process::Command, sync::Mutex, task::JoinHandle};
@@ -137,17 +198,27 @@ mod linux {
     }
 
     fn busy() -> bool {
-        SUSPENSIONS.load(Ordering::SeqCst) != 0 || rk_policy::operation_active()
+        // A running meeting is not "busy": the same capture stays open so the
+        // meeting can still be ended by voice. Import and retranscription do
+        // take the ASR engine and must pause listening.
+        rk_policy::operation_active() && !meeting_active()
     }
 
     pub(super) async fn supervise<R: Runtime>(app: AppHandle<R>) {
         let mut retry_at = Instant::now();
+        let mut microphone_revision = MICROPHONE_REVISION.load(Ordering::SeqCst);
         loop {
             {
                 let mut control = CONTROL.lock().await;
                 if EXITING.load(Ordering::SeqCst) {
                     stop_locked(&mut control).await;
                     return;
+                }
+                let revision = MICROPHONE_REVISION.load(Ordering::SeqCst);
+                if revision != microphone_revision {
+                    // Use the existing serialized stop to reap the old child first.
+                    stop_locked(&mut control).await;
+                    microphone_revision = revision;
                 }
                 if !ENABLED.load(Ordering::SeqCst) || busy() {
                     stop_locked(&mut control).await;
@@ -242,6 +313,43 @@ mod linux {
         }
     }
 
+    async fn pulse_output(args: &[&str]) -> Result<String, String> {
+        let mut command = Command::new("pactl");
+        command.args(args).kill_on_drop(true).stdin(Stdio::null()).stderr(Stdio::null());
+        let output = tokio::time::timeout(Duration::from_secs(2), command.output()).await
+            .map_err(|_| "查询麦克风超时".to_string())?
+            .map_err(|_| "无法查询 PulseAudio 麦克风".to_string())?;
+        if !output.status.success() || output.stdout.len() > 65536 {
+            return Err("PulseAudio 麦克风列表不可用".into());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    async fn microphone_source(requested: Option<&str>) -> Result<String, String> {
+        let output = pulse_output(&["list", "short", "sources"]).await?;
+        let sources: Vec<String> = output.lines().filter_map(|line| line.split_whitespace().nth(1).map(str::to_owned)).collect();
+        if let Some(source) = std::env::var("MEETINGBOX_WAKE_SOURCE").ok().filter(|s| !s.trim().is_empty()) {
+            let source = source.trim();
+            if sources.iter().any(|s| s == source) {
+                // Explicit deployment overrides also support virtual sources for controlled acceptance.
+                return Ok(source.to_string());
+            }
+            return Err("指定的唤醒麦克风当前不可用".into());
+        }
+        let default = pulse_output(&["get-default-source"]).await.ok();
+        super::super::devices::capture_guard::resolve_pulse_microphone_source(requested, &sources, default.as_deref())
+    }
+
+    fn publish_listening<R: Runtime>(app: &AppHandle<R>, selected: &str) {
+        use super::super::wake_policy::WakeContext;
+        let (state, detail) = match voice_context() {
+            WakeContext::Idle => ("listening", "空闲监听中"),
+            WakeContext::Meeting => ("meeting", "会议进行中，可说“结束会议”"),
+            WakeContext::Transition => ("paused", "正在启动或保存会议"),
+        };
+        publish(app, state, Some(&format!("{detail}；麦克风：{selected}")));
+    }
+
     async fn run_capture<R: Runtime>(app: &AppHandle<R>, cancel: &CancellationToken) -> Result<(), String> {
         let url = endpoint()?;
         let client = reqwest::Client::builder().timeout(REQUEST_TIMEOUT)
@@ -270,30 +378,65 @@ mod linux {
             *STATUS.write().unwrap() = Some(current);
         }
         if cancel.is_cancelled() || busy() { return Ok(()); }
+        let revision = MICROPHONE_REVISION.load(Ordering::SeqCst);
+        let preferred = load_recording_preferences(app).await.ok()
+            .and_then(|preferences| preferences.preferred_mic_device);
+        let selected = microphone_source(preferred.as_deref()).await;
+        let selected = match selected {
+            Ok(source) => source,
+            Err(detail) => { publish(app, "unavailable", Some(&detail)); return Ok(()); }
+        };
         let mut command = Command::new("/usr/bin/parec");
         command.args(["--format=s16le", "--rate=16000", "--channels=1", "--raw", "--latency-msec=100"])
+            .arg("--device").arg(&selected)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
-        if let Ok(source) = std::env::var("MEETINGBOX_WAKE_SOURCE") {
-            if !source.trim().is_empty() { command.arg("--device").arg(source); }
+        if MICROPHONE_REVISION.load(Ordering::SeqCst) != revision {
+            return Ok(()); // Microphone changed while resolving; restart with the new choice.
         }
         let mut child = command.spawn().map_err(|_| "无法启动 /usr/bin/parec 空闲音频采集")?;
-        log::info!("Idle voice capture started pid={:?}", child.id());
+        log::info!("Idle voice capture started pid={:?} source={}", child.id(), selected);
         // Once spawned, all exits below pass through kill + wait and session reset.
         let mut stdout = child.stdout.take().expect("piped parec stdout");
         let mut session = uuid::Uuid::new_v4().to_string();
         let mut seq = 0u64;
         let mut window = WakeWindow::default();
         let mut pcm = [0u8; FRAME_BYTES];
-        publish(app, "listening", Some("空闲监听中；会议期间暂停"));
+        let mut source_check_at = Instant::now() + Duration::from_secs(5);
+        let mut published_context = voice_context();
+        publish_listening(app, &selected);
         let outcome = async {
             loop {
-                if window.expired(Instant::now()) {
+                let context = voice_context();
+                if context != published_context {
+                    // A wake from the previous mode must not act on a new meeting.
+                    reset(&client, &url, &session).await;
+                    session = uuid::Uuid::new_v4().to_string(); seq = 0;
+                    window = WakeWindow::default();
+                    published_context = context;
+                    publish_listening(app, &selected);
+                }
+                if Instant::now() >= source_check_at {
+                    source_check_at = Instant::now() + Duration::from_secs(5);
+                    match microphone_source(preferred.as_deref()).await {
+                        Ok(source) if source == selected => {}
+                        Ok(_) => {
+                            log::info!("Idle voice microphone changed; restarting capture");
+                            return Ok(());
+                        }
+                        Err(detail) => {
+                            publish(app, "unavailable", Some(&detail));
+                            return Ok(());
+                        }
+                    }
+                }
+                if let Some(reason) = window.expiry_reason(Instant::now()) {
+                    log::info!("Idle voice wake decision reason={}", reason);
                     event(app, "timeout", "等待语音指令或录音启动超时");
                     reset(&client, &url, &session).await;
                     session = uuid::Uuid::new_v4().to_string();
                     seq = 0;
                     window = WakeWindow::default();
-                    publish(app, "listening", None);
+                    publish_listening(app, &selected);
                 }
                 tokio::time::timeout(Duration::from_secs(2), stdout.read_exact(&mut pcm)).await
                     .map_err(|_| "空闲音频采集超时".to_string())?
@@ -302,7 +445,8 @@ mod linux {
                 let form = reqwest::multipart::Form::new()
                     .text("session_id", session.clone()).text("seq", seq.to_string())
                     .text("mode", "wake").text("expect_followup", window.awaiting(now).to_string())
-                    .text("suppress", window.suppressed(now).to_string())
+                    .text("suppress", (window.suppressed(now)
+                        || voice_context() == super::super::wake_policy::WakeContext::Transition).to_string())
                     .text("barge_active", "false")
                     .part("audio", reqwest::multipart::Part::bytes(wav(&pcm)).file_name("idle.wav")
                         .mime_str("audio/wav").map_err(|_| "WAV 编码失败".to_string())?);
@@ -314,39 +458,66 @@ mod linux {
                 for item in response.events {
                     let now = Instant::now();
                     if busy() || cancel.is_cancelled() || window.suppressed(now) { break; }
-                    match item.kind.as_str() {
-                        "wake" => {
-                            window.wake(now);
+                    use super::super::wake_policy::WakeAction;
+                    let context = voice_context();
+                    if context != published_context { break; }
+                    let decision = window.handle_event(context, item.kind.as_str(), item.trigger.as_deref(),
+                        item.text.as_deref(), item.reason.as_deref(), now);
+                    if !matches!(decision.reason, "partial" | "unhandled_event" | "meeting_transition") {
+                        log::info!("Idle voice wake decision reason={}", decision.reason);
+                    }
+                    match decision.action {
+                        WakeAction::Wake => {
                             if let Some(word) = item.keyword {
                                 let mut current = status(); current.wake_word = word;
                                 *STATUS.write().unwrap() = Some(current);
                             }
                             publish(app, "awaiting_command", None);
                             crate::tray::focus_main_window(app);
-                            event(app, "wake", "请说开始会议或开始录音");
+                            event(app, "wake", if meeting_active() {
+                                "请说结束会议或停止录音"
+                            } else {
+                                "请说开始会议或开始录音"
+                            });
                         }
-                        "utterance" if matches!(item.trigger.as_deref(), Some("wake" | "followup")) => {
-                            if window.accept(item.text.as_deref().unwrap_or(""), now) {
-                                publish(app, "paused", Some("正在等待录音启动"));
-                                event(app, "start", "正在开始会议录音");
-                                app.emit("request-start-recording", ()).map_err(|_| "无法请求开始录音".to_string())?;
-                            } else if window.awaiting(now) {
-                                event(app, "cancel", "仅支持开始会议或开始录音指令");
-                                reset(&client, &url, &session).await;
-                                session = uuid::Uuid::new_v4().to_string(); seq = 0;
-                                window = WakeWindow::default(); publish(app, "listening", None);
-                                break;
-                            }
+                        WakeAction::Start => {
+                            publish(app, "paused", Some("正在等待录音启动"));
+                            event(app, "start", "正在开始会议录音");
+                            app.emit("request-start-recording", ()).map_err(|_| "无法请求开始录音".to_string())?;
                         }
-                        "dropped" | "barge" => {
-                            event(app, if item.reason.as_deref() == Some("wake_timeout") { "timeout" } else { "cancel" },
-                                "语音指令已取消");
+                        WakeAction::Stop => {
+                            let recording_session = super::super::recording_commands::recording_session_id();
+                            publish(app, "paused", Some("正在结束会议"));
+                            event(app, "stop", "正在结束会议并保存");
+                            // Clear service audio while retaining native action
+                            // suppression until shutdown changes the context.
                             reset(&client, &url, &session).await;
                             session = uuid::Uuid::new_v4().to_string(); seq = 0;
-                            window = WakeWindow::default(); publish(app, "listening", None);
+                            if let Some(session_id) = recording_session {
+                                app.emit("request-stop-recording", serde_json::json!({ "session_id": session_id }))
+                                    .map_err(|_| "无法请求结束会议".to_string())?;
+                            }
+                        }
+                        WakeAction::KeepAwaiting => {
+                            publish(app, "awaiting_command", None);
+                        }
+                        WakeAction::Cancel | WakeAction::Timeout => {
+                            if decision.reason == "unsupported_command" {
+                                event(app, "cancel", if meeting_active() {
+                                    "仅支持结束会议或停止录音指令"
+                                } else {
+                                    "仅支持开始会议或开始录音指令"
+                                });
+                            } else {
+                                event(app, if decision.action == WakeAction::Timeout { "timeout" } else { "cancel" },
+                                    "语音指令已取消");
+                            }
+                            reset(&client, &url, &session).await;
+                            session = uuid::Uuid::new_v4().to_string(); seq = 0;
+                            window = WakeWindow::default(); publish_listening(app, &selected);
                             break;
                         }
-                        _ => {} // Partial text can never trigger an action.
+                        WakeAction::Ignore => {} // Partial text can never trigger an action.
                     }
                 }
             }
@@ -354,7 +525,7 @@ mod linux {
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => Ok(()),
-            _ = async { loop { if busy() { break; } tokio::time::sleep(Duration::from_millis(100)).await; } } => Ok(()),
+            _ = async { loop { if busy() || MICROPHONE_REVISION.load(Ordering::SeqCst) != revision { break; } tokio::time::sleep(Duration::from_millis(100)).await; } } => Ok(()),
             result = outcome => result,
         };
         // stdout is local and the child cannot escape the owner task.
