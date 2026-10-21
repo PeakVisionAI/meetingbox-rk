@@ -1,6 +1,6 @@
 [MeetingBox power controls]
 Identity=unix-user:@MEETINGBOX_POWER_USER@
-Action=org.freedesktop.login1.reboot;org.freedesktop.login1.reboot-multiple-sessions;org.freedesktop.login1.suspend;org.freedesktop.login1.suspend-multiple-sessions;org.freedesktop.login1.power-off;org.freedesktop.login1.power-off-multiple-sessions
-ResultAny=yes
-ResultInactive=yes
+Action=org.freedesktop.login1.reboot;org.freedesktop.login1.reboot-multiple-sessions;org.freedesktop.login1.power-off;org.freedesktop.login1.power-off-multiple-sessions
+ResultAny=no
+ResultInactive=no
 ResultActive=yes

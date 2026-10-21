@@ -152,15 +152,17 @@ sudo frontend/src-tauri/scripts/prepare-device-release.sh \
   ./meetingbox_<version>_arm64.deb ./license.json
 ~~~
 
-该脚本会安装许可证、安装关机/重启/待机所需的 polkit 策略，并用 apt 安装 Debian 包。
+该脚本会安装许可证、安装关机/重启所需的 polkit 策略，并用 apt 安装 Debian 包。
 
 也可以手动安装：
 
 ~~~bash
 sudo apt install ./meetingbox_<version>_arm64.deb
 sudo frontend/src-tauri/scripts/install-license.sh ./license.json
-sudo frontend/src-tauri/scripts/install-power-policy.sh
+sudo frontend/src-tauri/scripts/install-power-policy.sh ubuntu
 ~~~
+
+将 `ubuntu` 替换为应用的实际桌面运行用户。Ubuntu 22.04 的 polkit 0.105 使用 `.pkla` 策略；安装脚本会创建 `/etc/polkit-1/localauthority/50-local.d/50-meetingbox-power.pkla`，同时为新版 polkit 安装 `.rules`。授权仅覆盖该用户的活动本地桌面会话的关机和重启（包含有其他登录会话时的操作），SSH 会话不授予免认证权限。
 
 许可证权限应保持为 root 所有，运行用户可读（通常为 640）。不要把私钥、源码、.git、target/ 或模型下载缓存放到客户设备。
 
@@ -200,7 +202,7 @@ X-GNOME-Autostart-enabled=true
 EOF
 ~~~
 
-tauri.conf.json 已配置启动窗口全屏。若 Debian 包安装后的可执行文件路径不同，用以下命令确认并修改 Exec：
+Linux 的 tauri.linux.conf.json 已配置普通最大化窗口启动，程序保留 GTK/WebKit 的默认渲染选择。旧版强制 GLES/EGL、WebKit 合成模式和禁用 DMA-BUF 的设置在当前 RK3588/WebKit 2.50 环境会导致首帧停滞、输入不可见。不要通过 X11 unmap/map 绕过 GTK 窗口生命周期；升级后应实际验证输入、删除及窗口恢复时画面同步更新。若 Debian 包安装后的可执行文件路径不同，用以下命令确认并修改 Exec：
 
 ~~~bash
 command -v meetily
