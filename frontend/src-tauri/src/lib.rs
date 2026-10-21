@@ -56,6 +56,7 @@ pub mod state;
 pub mod summary;
 pub mod system_power;
 pub mod local_services;
+pub mod knowledge_center;
 mod runtime_stress;
 pub mod tray;
 pub mod utils;
@@ -658,6 +659,10 @@ pub fn run() {
             access_control::export_meeting_text,
             access_control::meeting_uses_independent_password,
             api::api_search_transcripts,
+            knowledge_center::knowledge_enter,
+            knowledge_center::knowledge_request,
+            knowledge_center::knowledge_leave,
+            knowledge_center::knowledge_audio,
             productivity::api_search_meetings,
             productivity::api_list_speaker_labels,
             productivity::api_save_speaker_label,

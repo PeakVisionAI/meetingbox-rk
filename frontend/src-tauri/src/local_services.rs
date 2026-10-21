@@ -22,6 +22,7 @@ async fn ready(client: &reqwest::Client, url: &str, bridge: bool) -> bool {
 
 #[tauri::command]
 pub async fn ensure_local_services(app: tauri::AppHandle) -> Result<(), String> {
+    crate::knowledge_center::require_meeting_mode()?;
     if std::env::var("MEETINGBOX_ASR_STREAM").unwrap_or_default() != "1" { return Ok(()); }
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().map_err(|e| e.to_string())?;
     let bridge = format!("{}/healthz", std::env::var("MEETINGBOX_ASR_URL").unwrap_or_else(|_| "http://192.168.44.50:8020".into()).trim_end_matches('/'));

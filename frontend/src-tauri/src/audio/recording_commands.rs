@@ -90,6 +90,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
     let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    crate::knowledge_center::require_meeting_mode()?;
     let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
@@ -323,6 +324,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
     let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    crate::knowledge_center::require_meeting_mode()?;
     let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording

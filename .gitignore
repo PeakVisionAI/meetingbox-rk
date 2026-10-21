@@ -95,3 +95,8 @@ meeting-data/
 meetily-recordings/
 .venv/
 venv/
+
+*.token
+**/embedding-model/
+**/audio-cache/
+services/knowledge-center/exports/

@@ -29,6 +29,8 @@ MAX_UPLOAD = 32 * 1024 * 1024
 jobs: dict[str, dict] = {}
 tasks: set[asyncio.Task] = set()
 final_summary_until = 0.0
+knowledge_owner = None
+knowledge_until = 0.0
 
 @app.get('/runtime/model-resources')
 async def model_resources():
@@ -39,6 +41,8 @@ async def final_summary_runtime(action: str, request: Request):
     global final_summary_until
     if request.client.host not in ('192.168.44.1', '127.0.0.1'):
         raise HTTPException(403, 'Native summary adapter only')
+    if knowledge_owner and time.monotonic() < knowledge_until:
+        raise HTTPException(409, 'Knowledge center owns model resources')
     if action == 'release':
         final_summary_until = 0.0
         return {'released': True}
@@ -49,6 +53,45 @@ async def final_summary_runtime(action: str, request: Request):
         raise HTTPException(409, 'Speech finalization is still active')
     final_summary_until = time.monotonic() + 3600
     return {'active_streams': active, 'pending_finalizations': pending, 'exclusive': True}
+
+@app.post('/runtime/knowledge/{action}')
+async def knowledge_runtime(action: str, request: Request):
+    global knowledge_owner, knowledge_until, final_summary_until, fast_ready
+    if request.client.host not in ('192.168.44.1', '127.0.0.1'):
+        raise HTTPException(403, 'Native knowledge service only')
+    data = await request.json()
+    owner = data.get('owner', '')
+    if not isinstance(owner, str) or len(owner) < 20:
+        raise HTTPException(400, 'Invalid resource owner')
+    now = time.monotonic()
+    if action == 'release':
+        if knowledge_owner == owner:
+            knowledge_owner = None; knowledge_until = 0.0; final_summary_until = 0.0
+        return {'released': True}
+    if action != 'acquire': raise HTTPException(400, 'Invalid action')
+    if knowledge_owner and now < knowledge_until and knowledge_owner != owner:
+        raise HTTPException(409, 'Knowledge center is already active')
+    if now < final_summary_until and (not knowledge_owner or now >= knowledge_until):
+        raise HTTPException(409, 'Final summary is still running')
+    active = sum(not s.done.is_set() for s in streams.values())
+    pending = sum(j.get('status') == 'running' for j in jobs.values())
+    if active or pending or inference_slot.locked():
+        raise HTTPException(409, 'Speech processing must finish first')
+    first_entry = knowledge_owner != owner or now >= knowledge_until
+    knowledge_owner = owner; knowledge_until = now + 90; final_summary_until = knowledge_until
+    if first_entry:
+        import gc
+        import fast_stream
+        from app.utils.speaker_diarizer import close_speaker_diarizer
+        for stream in streams.values():
+            speaker = getattr(stream, 'speaker', None)
+            if speaker is not None:
+                speaker.model = speaker.processor = speaker.cache = None
+        fast_stream.recognizer = fast_stream.speaker_parts = None
+        close_speaker_diarizer()
+        fast_ready = False
+        gc.collect()
+    return {'exclusive': True, 'active_streams': 0}
 
 locks: dict[int, asyncio.Lock] = {}
 inference_slot = asyncio.Lock()
@@ -330,6 +373,13 @@ def normalize_segments(payload: dict) -> list[dict]:
 
 @app.get("/healthz")
 async def health():
+    global fast_ready
+    if time.monotonic() < final_summary_until:
+        return {'ready': False, 'mode': 'knowledge' if knowledge_owner else 'final-summary', 'fast_realtime': False}
+    if FAST_ENABLED and not fast_ready:
+        from fast_stream import warmup
+        await asyncio.to_thread(warmup)
+        fast_ready = True
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             response = await client.get(ASR_URL + "/health", headers=headers())
