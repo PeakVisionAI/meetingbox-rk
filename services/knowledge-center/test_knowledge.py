@@ -12,7 +12,7 @@ class KnowledgeTests(unittest.TestCase):
   with sqlite3.connect(root/'source.sqlite') as c:
    c.executescript('CREATE TABLE meetings(id,title,created_at,folder_path);CREATE TABLE transcripts(id,meeting_id,transcript,speaker,audio_start_time,audio_end_time,duration,timestamp);CREATE TABLE summary_processes(meeting_id,result);')
    c.execute('INSERT INTO meetings VALUES(?,?,?,?)',('m1','测试会议','2026-10-21',str(root)))
-   c.executemany('INSERT INTO transcripts VALUES(?,?,?,?,?,?,?,?)',[('t1','m1','讨论会议纪要。','发言人1',0,3,3,'a'),('t2','m1','决定保留标点！','发言人1',4,6,2,'b')])
+   c.executemany('INSERT INTO transcripts VALUES(?,?,?,?,?,?,?,?)',[('t1','m1','讨论会议纪要。','发言人1',0,3,3,'a'),('t2','m1','决定完整保留逐字稿标点！','发言人1',4,6,2,'b')])
  def tearDown(self):
   # sqlite connections are finalised before removing the temporary directory.
   import gc;gc.collect();self.temp.cleanup()
@@ -71,24 +71,34 @@ class KnowledgeTests(unittest.TestCase):
    result=asyncio.run(self.k.match_events([{'event':'项目规划','aliases':[]}]))
   self.assertEqual(len(result[0]['candidates']),1);self.assertNotIn('topic_id',result[0])
  def test_model_short_references_map_back_to_exact_transcript_ids(self):
-  answer=json.dumps({'events':[{'event':'确认纪要保留标点','source_ids':['S2']},{'event':'无依据事项','source_ids':['S99']}]})
+  answer=json.dumps({'events':[{'title':'逐字稿标点保留规则','event':'确认纪要保留标点','evidence_quote':'决定完整保留逐字稿标点！','source_ids':['S1']},{'event':'无依据事项','source_ids':['S99']}]})
   with patch.object(self.k,'infer',AsyncMock(return_value=answer)):
    draft=asyncio.run(self.k.extract_events('m1'))
   self.assertEqual(len(draft['events']),1)
-  self.assertEqual(draft['events'][0]['source_ids'],['t2'])
+  self.assertEqual(draft['events'][0]['source_ids'],['t1','t2'])
+ def test_business_events_reject_process_and_missing_evidence(self):
+  rows=[{'transcript':'白鹤滩电站正在投产。'}]
+  self.assertTrue(self.k.business_evidence({'title':'白鹤滩电站投产','evidence_quote':'白鹤滩电站正在投产'},rows))
+  self.assertFalse(self.k.business_evidence({'title':'会议进入讨论环节','evidence_quote':'白鹤滩电站正在投产'},rows))
+  self.assertFalse(self.k.business_evidence({'title':'白鹤滩电站投产','evidence_quote':'已经完成全部投产工作'},rows))
+ def test_business_evidence_survives_short_asr_sentence_boundaries(self):
+  self.assertTrue(self.k.business_evidence({'title':'白鹤滩机组投产','evidence_quote':'白鹤滩电站正在投产'},[{'transcript':'白鹤滩电站'},{'transcript':'正在投产。'}]))
+ def test_stitched_model_quotes_keep_only_verified_fragment(self):
+  e={'evidence_quote':'白鹤滩电站正在投产。无依据的另一项结论。'}
+  self.assertEqual(self.k.verified_quote(e,[{'transcript':'嗯，白鹤滩电站正在投产。'}]),'白鹤滩电站正在投产')
  def test_docx_transcript_preserves_punctuation_and_grouping(self):
   from docx import Document
   result=asyncio.run(self.k.make_document({'meeting_id':'m1','kind':'transcript'}))
   texts=[p.text for p in Document(result['path']).paragraphs]
-  self.assertIn('讨论会议纪要。决定保留标点！',texts)
+  self.assertIn('讨论会议纪要。决定完整保留逐字稿标点！',texts)
   self.assertEqual(sum(x=='发言人1' for x in texts),1)
   self.assertEqual(self.k.detail('m1')['documents'],[])
   self.assertFalse(self.k.list_meetings({})['meetings'][0]['has_document'])
  def test_native_embedded_speaker_is_normalized_for_voice_and_export(self):
-  with sqlite3.connect(self.k.SOURCE) as c:c.execute("UPDATE transcripts SET speaker=NULL,transcript='发言人2：决定保留标点！' WHERE id='t2'")
+  with sqlite3.connect(self.k.SOURCE) as c:c.execute("UPDATE transcripts SET speaker=NULL,transcript='发言人2：决定完整保留逐字稿标点！' WHERE id='t2'")
   row=self.k.detail('m1')['transcripts'][1]
   self.assertEqual(row['speaker'],'发言人2')
-  self.assertEqual(row['transcript'],'决定保留标点！')
+  self.assertEqual(row['transcript'],'决定完整保留逐字稿标点！')
  def test_transport_requires_secret_and_session(self):
   class Request:
    class Client:host='127.0.0.1'
