@@ -4,7 +4,7 @@
 
 本适配使用 BossAI-ASR 的独立 Python FunASR 服务，通过 HTTP 复用文件识别能力。meetingbox 保留 Rust 音频采集、混音、重采样、Silero VAD、Tauri 事件、SQLite 和录音保存。无需启动 BossAI 的 Node 服务、Web 前端、账号或会议 Agent。
 
-已适配的路径：实时录音产生的语音片段、音频文件导入、会后重新转写。实时路径仍然是 VAD 切句后识别，返回完整句子；本次没有实现边说边更新的 Paraformer 流式字幕，也没有引入唤醒词或 TTS。
+已适配的路径：实时录音产生的语音片段、音频文件导入、会后重新转写。实时路径仍然是 VAD 切句后识别，返回完整句子；未实现边说边更新的 Paraformer 流式字幕。另已接入 Linux 待机唤醒，见 [语音唤醒服务与部署](../services/voice-front/README.md)：复用 BossAI VoiceFront KWS/VAD，唤醒后收到“开始会议”等明确指令才开始录音。会议中暂停监听，提示采用界面和短提示音，未引入 TTS。
 
 事实依据：BossAI-ASR `main` 提交 `3fd94abdd`，`asr_server/server.py` 的 `/health`、`/asr/transcribe-file`；meetingbox 基线 `b3a3bda`。外部接口和依赖升级后应重新做兼容验证。
 
@@ -131,7 +131,7 @@ cargo check --locked -p meetily
 
 ## 来源及授权
 
-本变更新写 Rust HTTP 适配，不复制 BossAI 语音源码、模型权重或客户配置。BossAI-ASR 未发现根源码许可证；实际分发其服务或模型时，需确认相应授权，不能依据 meetingbox 的 MIT 许可证推定。Piper 中文音色清单标为 `NOASSERTION`，本次不打包。
+文件 ASR 适配只新增 Rust HTTP 客户端；唤醒适配另外在 `services/voice-front/vendor` 复用 BossAI VoiceFront 源码，来源版本和逐文件 hash 记录于 PROVENANCE.json。未复制客户配置。BossAI-ASR 未发现根源码许可证；不能依据 meetingbox 的 MIT 许可证推定其源码授权。当前按用户授权部署在其盒子与私有 fork，进一步公开分发需确认相应授权。Piper 中文音色清单标为 `NOASSERTION`，未打包该音色。
 
 - https://github.com/PeakVisionAI/BossAI-ASR
 - https://github.com/PeakVisionAI/BossAI-ASR/blob/main/docs/asr-realtime.md

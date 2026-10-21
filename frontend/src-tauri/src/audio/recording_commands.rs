@@ -45,6 +45,7 @@ static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
 static TRANSCRIPTION_TASK: Mutex<Option<TranscriptionTask>> = Mutex::new(None);
 static ASR_OPERATION: Mutex<Option<super::transcription::rk_policy::AsrOperationGuard>> = Mutex::new(None);
 static STOP_RECORDING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static WAKE_SUSPENSION: Mutex<Option<super::wake_listener::RecordingSuspension>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
@@ -92,6 +93,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
     let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
         .map_err(|error| error.to_string())?;
+    let wake_suspension = super::wake_listener::suspend_for_recording().await;
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
@@ -243,6 +245,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
     *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
+    *WAKE_SUSPENSION.lock().unwrap() = Some(wake_suspension);
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
@@ -324,6 +327,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
     let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
         .map_err(|error| error.to_string())?;
+    let wake_suspension = super::wake_listener::suspend_for_recording().await;
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
@@ -434,6 +438,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
     *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
+    *WAKE_SUSPENSION.lock().unwrap() = Some(wake_suspension);
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
@@ -910,6 +915,7 @@ pub async fn stop_recording<R: Runtime>(
 
     // Release operation ownership only after all workers and calibration finish.
     ASR_OPERATION.lock().unwrap().take();
+    WAKE_SUSPENSION.lock().unwrap().take();
 
     // Step 5: Complete shutdown
     let _ = app.emit(

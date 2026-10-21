@@ -1,4 +1,5 @@
 import io
+import http.client
 import json
 import sys
 import struct
@@ -111,7 +112,14 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.request("/v1/asr/transcribe-upload", b"--test--\r\n")[0], 400)
         body = multipart(wav()).replace(b"--test--\r\n", b'--test\r\nContent-Disposition: form-data; name="audio"\r\n\r\nx\r\n--test--\r\n')
         self.assertEqual(self.request("/v1/asr/transcribe-upload", body)[0], 400)
-        self.assertEqual(self.request("/v1/asr/transcribe-upload", b"x" * (MAX_BODY + 1))[0], 413)
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        try:
+            connection.putrequest("POST", "/v1/asr/transcribe-upload")
+            connection.putheader("Content-Length", str(MAX_BODY + 1))
+            connection.endheaders()
+            self.assertEqual(connection.getresponse().status, 413)
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":
