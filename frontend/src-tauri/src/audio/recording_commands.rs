@@ -12,7 +12,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tokio::task::JoinHandle;
+use super::transcription::task::TranscriptionTask;
 
 use super::{
     parse_audio_device,
@@ -42,7 +42,9 @@ static IS_RECORDING: AtomicBool = AtomicBool::new(false);
 
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
-static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+static TRANSCRIPTION_TASK: Mutex<Option<TranscriptionTask>> = Mutex::new(None);
+static ASR_OPERATION: Mutex<Option<super::transcription::rk_policy::AsrOperationGuard>> = Mutex::new(None);
+static STOP_RECORDING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
@@ -88,6 +90,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         meeting_name
     );
 
+    let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
+        .map_err(|error| error.to_string())?;
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
@@ -238,6 +242,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
+    *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
@@ -317,6 +322,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         mic_device_name, system_device_name, meeting_name
     );
 
+    let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
+        .map_err(|error| error.to_string())?;
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
@@ -426,6 +433,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
+    *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
@@ -503,6 +511,7 @@ pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
     _args: RecordingArgs,
 ) -> Result<StopRecordingResult, String> {
+    let _stop_guard = STOP_RECORDING_LOCK.lock().await;
     info!(
         "🛑 Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
     );
@@ -573,14 +582,15 @@ pub async fn stop_recording<R: Runtime>(
         }),
     );
 
-    // Wait for transcription task with enhanced progress monitoring (NO TIMEOUT - we must process all chunks)
+    // Drain pending transcription within the shutdown deadline, then cancel and join.
     let transcription_task = {
         let mut global_task = TRANSCRIPTION_TASK.lock().unwrap();
         global_task.take()
     };
 
     if let Some(task_handle) = transcription_task {
-        info!("⏳ Waiting for ALL transcription chunks to be processed (no timeout - preserving every chunk)");
+        let drain_timeout = super::transcription::rk_policy::shutdown_timeout();
+        info!("⏳ Waiting up to {} seconds for pending transcription chunks", drain_timeout.as_secs());
 
         // Enhanced progress monitoring during shutdown
         let progress_app = app.clone();
@@ -606,20 +616,20 @@ pub async fn stop_recording<R: Runtime>(
         });
 
         // Wait for remaining chunks, but do not freeze the UI if ASR is stuck.
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(45),
-            task_handle
-        ).await {
-            Ok(Ok(())) => {
+        match task_handle.finish(drain_timeout).await {
+            Ok(true) => {
                 info!("✅ ALL transcription chunks processed successfully - no data lost");
             }
-            Ok(Err(e)) => {
+            Err(e) => {
+                super::transcription::rk_policy::mark_incomplete_session();
                 warn!("⚠️ Transcription task completed with error: {:?}", e);
                 // Continue anyway - the worker may have processed most chunks
             }
-            Err(_) => {
-                warn!("⏱️ Transcription timeout reached, continuing shutdown");
-                // Continue shutdown even on timeout - better to lose some chunks than hang forever
+            Ok(false) => {
+                super::transcription::rk_policy::mark_incomplete_session();
+                warn!("⏱️ Transcription timeout reached; workers cancelled and joined");
+                let _ = app.emit("transcription-warning",
+                    "转写等待超时，剩余片段已停止处理，可使用原始录音重新转写");
             }
         }
 
@@ -897,6 +907,9 @@ pub async fn stop_recording<R: Runtime>(
 
     // Database save removed - frontend will handle this after receiving all transcripts
     info!("ℹ️ Skipping database save in Rust - frontend will save after all transcripts received");
+
+    // Release operation ownership only after all workers and calibration finish.
+    ASR_OPERATION.lock().unwrap().take();
 
     // Step 5: Complete shutdown
     let _ = app.emit(

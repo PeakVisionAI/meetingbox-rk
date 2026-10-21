@@ -26,6 +26,10 @@ Rust / Tauri desktop core
         └─ 分时摘要与最终会议纪要
 ```
 
+可通过可选的 BossAI FunASR 适配复用本地语音服务，覆盖实时语音片段、音频导入和重新转写；配置、组件边界及验证要求见 [BossAI-ASR 复用说明](docs/BOSSAI_ASR_INTEGRATION.md)。
+
+新增可选 [RK NPU 优先适配](docs/RK_NPU_ADAPTATION.md)，支持 SenseVoice RKNN 与显式 BossAI CPU 回退。仓库提供 [独立 RK3588 ASR 服务、模型/runtime 下载校验和 systemd 部署配置](services/rk-asr/README.md)；启用前需在目标机完成模型推理及 NPU 执行验收。
+
 RK 设备上的推理服务由部署配置决定。当前验收基线覆盖 RK3588 ASR、说话人处理和 RK1828 摘要服务，详见 [RK 部署与验收基线](docs/RK_DEPLOYMENT_ACCEPTANCE_BASELINE.md)。
 
 ## 仓库结构
@@ -35,6 +39,7 @@ frontend/                  Next.js 前端与 Tauri 应用
 frontend/src-tauri/        Rust 核心、数据库、音频和打包配置
 frontend/src-tauri/scripts/许可证、设备指纹和交付脚本
 llama-helper/              摘要引擎兼容 sidecar
+services/rk-asr/            可选 SenseVoice RKNN 服务与部署工具
 docs/                      构建、架构、RK 部署和交付说明
 backend/                   历史 FastAPI/Whisper 归档，不是当前生产入口
 ```
