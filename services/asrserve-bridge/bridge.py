@@ -396,10 +396,16 @@ async def health():
             return {"ready": False, "backend": "asrserve-rknn", "error": "RK ASR unavailable",
                     "fast_realtime": False}
         ready = state.get("ready") is True
+        speaker_model = os.getenv("MEETINGBOX_SPEAKER_MODEL", "").strip()
+        punct_model = os.getenv("MEETINGBOX_PUNCT_MODEL", "").strip()
         return {"ready": ready, "fast_realtime": ready, "backend": "asrserve-rknn",
                 "engine": "sensevoice-rknn", "upstream": state,
                 "audio_enhancement": os.getenv("MEETINGBOX_AUDIO_ENHANCE", "off"),
-                "punctuation": {"enabled": False, "model": None}}
+                "speakers": {"enabled": bool(speaker_model) and os.path.exists(speaker_model),
+                             "model": speaker_model or None},
+                "punctuation": {"enabled": bool(punct_model) and os.path.exists(punct_model),
+                                "model": punct_model or None, "fallback": "model-output"},
+                "alignment": "proportional"}
 
     if FAST_ENABLED and not fast_ready:
         from fast_stream import warmup

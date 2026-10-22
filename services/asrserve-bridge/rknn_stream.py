@@ -29,6 +29,9 @@ import urllib.request
 import wave
 from array import array
 
+from diarization import OnlineSpeakerCluster, SpeakerEmbedder
+from text_timing import Punctuator, utterance_timing
+
 SAMPLE_RATE = 16000
 BYTES_PER_MS = SAMPLE_RATE * 2 // 1000
 
@@ -102,6 +105,11 @@ class RknnStream:
         self.trailing_silence_ms = 0
         self.failure = None
 
+        # Optional enrichment; each one degrades to a no-op when the model is absent.
+        self.embedder = SpeakerEmbedder()
+        self.cluster = OnlineSpeakerCluster()
+        self.punctuator = Punctuator()
+
         self.window_ms = _env_int("MEETINGBOX_RK_WINDOW_MS", 8000)
         self.stride_ms = _env_int("MEETINGBOX_RK_STRIDE_MS", 600)
         self.silence_ms = _env_int("MEETINGBOX_RK_SILENCE_MS", 700)
@@ -116,9 +124,10 @@ class RknnStream:
     async def finish(self):
         async with self.lock:
             if not self.done.is_set():
-                text = await asyncio.to_thread(self._decode, bytes(self.buffer.tobytes()), self.buffer_start_ms)
+                pcm = bytes(self.buffer.tobytes())
+                text = await asyncio.to_thread(self._decode, pcm, self.buffer_start_ms)
                 if text.strip():
-                    self._publish(text, True, self.buffer_start_ms + len(self.buffer) // 16)
+                    await self._emit_final(pcm, text, self.buffer_start_ms + len(self.buffer) // 16)
                 self.buffer = array("h")
                 self.done.set()
                 (self.folder / "live-final.json").write_text(
@@ -189,7 +198,7 @@ class RknnStream:
         if len(pcm) >= 3200:
             text = await asyncio.to_thread(self._decode, pcm, self.buffer_start_ms)
             if text.strip():
-                self._publish(text, True, position_ms)
+                await self._emit_final(pcm, text, position_ms)
         self.index += 1
         self.start_ms = position_ms
         self.buffer_start_ms = position_ms
@@ -197,6 +206,21 @@ class RknnStream:
         self.last_text = ""
         self.trailing_silence_ms = 0
         self.last_decode_ms = position_ms
+
+    async def _emit_final(self, pcm, text, end_ms):
+        """Punctuate, time and label one closed utterance, then publish it."""
+        duration_ms = end_ms - self.buffer_start_ms
+        refined = self.punctuator.process(text)
+        timing = utterance_timing(refined, self.buffer_start_ms, end_ms)
+        embedding = await asyncio.to_thread(self.embedder.embed, pcm)
+        speaker_index = self.cluster.assign(embedding, duration_ms)
+        self._publish(
+            refined,
+            True,
+            end_ms,
+            speaker=OnlineSpeakerCluster.label(speaker_index),
+            timing=timing,
+        )
 
     def _decode(self, pcm, start_ms):
         """POST one WAV window to the RK sidecar and return its text."""
@@ -235,7 +259,7 @@ class RknnStream:
 
     # -- output ------------------------------------------------------------
 
-    def _publish(self, text, final, end_ms):
+    def _publish(self, text, final, end_ms, speaker=None, timing=None):
         text = text.strip()
         if not text:
             return
@@ -245,11 +269,12 @@ class RknnStream:
             "start_ms": self.start_ms,
             "end_ms": end_ms,
             "text": text,
-            "speaker": None,
+            "speaker": speaker,
+            "clauses": (timing or {}).get("clauses", []),
             "is_partial": not final,
             "text_ready_audio_ms": self.samples // 16,
             "generation": self.generation,
-            "token_times_ms": [],
+            "token_times_ms": (timing or {}).get("token_times_ms", []),
             "emitted_wall_time": time.time(),
             "speech_start_ms": self.start_ms,
             "speech_end_ms": end_ms,

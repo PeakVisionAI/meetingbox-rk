@@ -17,6 +17,7 @@ os.environ.setdefault("MEETINGBOX_RK_STRIDE_MS", "200")
 os.environ.setdefault("MEETINGBOX_RK_SILENCE_MS", "400")
 
 import rknn_stream  # noqa: E402  (environment must be set first)
+from diarization import OnlineSpeakerCluster  # noqa: E402
 
 CHUNK_SAMPLES = 3200  # 200 ms at 16 kHz
 
@@ -62,6 +63,18 @@ def speech_chunk(samples=CHUNK_SAMPLES, amplitude=3000):
 
 def silence_chunk(samples=CHUNK_SAMPLES):
     return b"\x00" * (samples * 2)
+
+
+class FakeEmbedder:
+    """Stands in for the sherpa-onnx speaker model: one constant speaker."""
+
+    def __init__(self, vector=(1.0, 0.0, 0.0)):
+        self.vector = list(vector)
+        self.calls = 0
+
+    def embed(self, pcm):
+        self.calls += 1
+        return self.vector
 
 
 class RknnStreamTest(unittest.IsolatedAsyncioTestCase):
@@ -129,6 +142,26 @@ class RknnStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stream.failure is not None, True)
         self.assertIn("RK ASR unavailable", stream.failure)
 
+    async def test_final_utterance_gets_speaker_clauses_and_timing(self):
+        stream = rknn_stream.RknnStream(11, self.folder)
+        stream.embedder = FakeEmbedder()
+        stream.cluster = OnlineSpeakerCluster(threshold=0.8, max_speakers=4, min_utterance_ms=0)
+        await stream.open("预算")
+
+        for _ in range(5):
+            await stream.feed(speech_chunk())
+        for _ in range(3):
+            await stream.feed(silence_chunk())
+
+        finals = [r for r in stream.take()["segments"] if not r["is_partial"]]
+        self.assertTrue(finals, "expected a closed utterance")
+        record = finals[-1]
+        self.assertEqual(record["speaker"], "发言人1")
+        self.assertTrue(record["clauses"], "clauses drive the UI highlight")
+        self.assertEqual(len(record["token_times_ms"]), len(record["text"]))
+        self.assertTrue(record["text"].endswith("。"), "punctuation fallback must terminate")
+        self.assertEqual(stream.embedder.calls, 1)
+
     def test_record_schema_matches_bridge_contract(self):
         stream = rknn_stream.RknnStream(10, self.folder)
         stream.samples = 3200
@@ -140,6 +173,7 @@ class RknnStreamTest(unittest.IsolatedAsyncioTestCase):
             "end_ms",
             "text",
             "speaker",
+            "clauses",
             "is_partial",
             "generation",
             "token_times_ms",

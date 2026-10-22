@@ -11,9 +11,9 @@
 | 实时字幕（增量 partial） | sherpa-onnx 流式 zipformer（CPU） | `rknn_stream` 滑窗重解码 SenseVoice（NPU） | 替代，已实现，需实机调参 |
 | 断句 / 整句合并 | sherpa endpoint detection | 尾静音阈值（默认 700ms）+ 20s 强制切句 | 替代 |
 | 会后整段校准 | `/v1/asr/finalize-meeting` + 声纹聚类 | RK 服务返回 `speaker_calibration:false` | 降级 |
-| 说话人标签 | torch 声纹模型（外部包 `app.services.realtime.speakers`） | 无 | **缺口** |
-| 标点 | FireRedPunc（OpenVINO，x86） | SenseVoice 自带标点 | 降级（不部署独立标点服务） |
-| 词级时间戳 | Qwen3 ForcedAligner（OpenVINO） | 无 | **缺口** |
+| 说话人标签 | torch 声纹模型（外部包 `app.services.realtime.speakers`） | sherpa-onnx 声纹 embedding + 在线余弦聚类（`diarization.py`） | 替代，已实现，准确率待实测 |
+| 标点 | FireRedPunc（OpenVINO，x86） | SenseVoice 自带 + 可选 sherpa-onnx CT-Transformer int8（`text_timing.py`） | 替代 |
+| 词级时间戳 | Qwen3 ForcedAligner（OpenVINO） | 句内按字符比例分配，产出 `clauses[]` + `token_times_ms[]` | 替代（近似，非强制对齐） |
 | 热词纠正 | 应用侧文本替换 | 同（`apply_hotword_corrections`） | 等价 |
 
 ## 2. 摘要与知识
@@ -39,16 +39,26 @@
 | 设备状态条 | 无 | 有（RK 保留） | RK 额外 |
 | 许可证 / 设备绑定 | 应用内 | 同 | 等价 |
 
-## 4. 两个真实缺口
+## 4. 三个能力现在的做法
 
-1. **说话人区分**。Intel 的分人依赖一个 torch 声纹模型，它甚至不在本仓库里
-   （`app.services.realtime.speakers`）。RK 侧当前不提供，逐字稿只有文本。
-   补齐需要额外引入一个轻声纹模型（CAM++ / 3D-Speaker 的 onnx 版本，CPU 可跑），
-   或者在 RK NPU 上做量化部署。这是唯一影响“看起来一样”的差距。
-2. **词级时间戳**。Intel 用 Qwen3 对齐器产出逐词时间，用于说话人轮次切分和原文引用定位。
-   SenseVoice 不是对齐模型，RK 侧只有句级时间。
+1. **说话人**（原缺口，已按方案 A 补齐）
+   `diarization.py`：每句取一个 sherpa-onnx 声纹 embedding，在线余弦聚类，
+   阈值 0.62、上限 8 人、短句不打标。和 SenseVoice 共用同一套 sherpa-onnx runtime，
+   不引入 PyTorch。
+   局限：**尚未在 RK 实机验证**。会议室远场、串音、同一人不同音量都会影响阈值，
+   上线前必须用真实录音调 `MEETINGBOX_SPEAKER_THRESHOLD`。
 
-两项都不影响录音、转写、摘要、导出、知识中心这些主流程。
+2. **标点**（原降级，现在可精修）
+   SenseVoice 自带标点作为基线；装 CT-Transformer int8 后由 `Punctuator` 二次精修。
+   模型缺失时仍然保证句尾有终止符，不会出现半句。
+
+3. **词级时间**（原缺口，现在有近似解）
+   `utterance_timing()` 按字符比例把整句时间摊到子句和每个字上，产出
+   `clauses[]`（子句 + 起止 ms）和 `token_times_ms[]`。
+   用于字幕高亮、导出时间戳、跳到某句都够用；它不是强制对齐，
+   遇到长停顿或语速突变会偏。
+   要更准的两条升级路：换 Paraformer 拿 token 时间戳（多一次推理），
+   或等 sherpa-onnx 对 SenseVoice 直接暴露 token 时间戳后替换 `utterance_timing`。
 
 ## 5. 为什么不能直接复用 Intel 的服务栈
 

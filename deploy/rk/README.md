@@ -79,13 +79,62 @@ export MEETINGBOX_CONFIG=/opt/meetingbox-rk/frontend/src-tauri/config/profile-rk
 
 ---
 
-## 4. 已知缺口
+## 4. 声纹、标点、词级时间
 
-- **说话人标签**：Intel 版依赖一个 torch 说话人模型（外部包
-  `app.services.realtime.speakers`），RK 侧没有等价实现。当前
-  `rknn_stream` 明确返回 `speaker: null`，`/healthz` 报 `diarization: unavailable`。
-  逐字稿仍可用，只是不区分人。要补齐需要单独上一个小声纹模型（CPU 或 NPU）。
-- **标点与字词对齐**：Intel 的 `audio-front` / `overlap-openvino` 依赖 OpenVINO（x86），
-  RK 上不部署。SenseVoice 自带标点，逐字稿可读；但不提供词级时间戳。
+三样都在 `services/asrserve-bridge` 里，全部**可选**：模型不存在时自动降级，
+不影响转写与落库。
+
+### 4.1 说话人（已实现，需模型）
+
+- 引擎：`diarization.py`，用 sherpa-onnx 的 `SpeakerEmbeddingExtractor`，
+  和 SenseVoice 共用同一套 runtime，不额外装 PyTorch。
+- 策略：每句（闭合 utterance）取一个 embedding，在线余弦聚类，
+  阈值默认 0.62、最多 8 人；短于 0.8s 的句子不打标。
+- 模型：sherpa-onnx 的 speaker-recognition release 里的中文通用模型，
+  例如 `3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`（以官方 release 页为准）。
+
+```bash
+mkdir -p /opt/meetingbox-rk/models
+# 下载后放好路径，unit 里加：
+#   Environment=MEETINGBOX_SPEAKER_MODEL=/opt/meetingbox-rk/models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+#   Environment=MEETINGBOX_SPEAKER_THRESHOLD=0.62
+#   Environment=MEETINGBOX_SPEAKER_MAX=8
+curl -s localhost:8030/healthz | jq '.speakers'
+```
+
+验收：两人交替说话 2 分钟，逐字稿应出现 `发言人1/发言人2`，且同一人不跳号。
+若串人就把阈值调高（0.70），若一人被拆成多个就把阈值调低（0.55）。
+
+### 4.2 标点（已实现，可选模型）
+
+- 首选：SenseVoice 自带标点，够用。
+- 精修：`text_timing.py` 里的 `Punctuator`，调 sherpa-onnx CT-Transformer int8；
+  release 里有 `sherpa-onnx-punct-ct-transformer-zh-en-vocab272727` 系列。
+- 无论模型在不在，句尾都会被补全（`ensure_ending`），不会出现半句没有标点。
+
+```bash
+#   Environment=MEETINGBOX_PUNCT_MODEL=/opt/meetingbox-rk/models/punct-ct-transformer.int8.onnx
+```
+
+### 4.3 词级时间（已实现，无需模型）
+
+Intel 用 Qwen3 对齐器产出逐词时间；RK 上不跑对齐模型，改成**句内按字符比例分配**
+（`text_timing.utterance_timing`）：
+
+- `clauses[]`：按标点切出的子句 + 起止毫秒，供 UI 高亮和“跳到这句”
+- `token_times_ms[]`：逐字时间（同样按比例）
+
+对中文、匀速讲话足够用于字幕高亮和导出；它不是强制对齐，
+遇到长停顿或语速突变会有偏差。要更准有两条升级路：
+
+1. 换 sherpa-onnx 的 Paraformer（自带 token 时间戳）做二次解码 —— 多一次推理，RK 上约 0.3–0.8×RTF；
+2. 若所用 sherpa-onnx 版本对 SenseVoice 直接返回 token 时间戳，把
+   `utterance_timing` 换成读识别结果即可，调用方不用改。
+
+## 5. 已知缺口
+
+- **说话人**：已按 A 方案补齐（sherpa-onnx 声纹 + 在线聚类），
+  但**尚未在 RK 实机上验证准确率**；模型缺失时自动退回无标签。
+- **词级时间**：改为句内比例分配，不是强制对齐；精度足够高亮，不足以做逐词引用。
 - **`/v1/asr/finalize-meeting`**：桥接不实现该端点，RK 服务会返回
   `speaker_calibration: false`。应用侧按“校准不可用”处理，不影响落库。
