@@ -152,6 +152,10 @@ pub async fn save_recording_preferences<R: Runtime>(
     let prefs_value = serde_json::to_value(preferences)
         .map_err(|e| anyhow::anyhow!("Failed to serialize preferences: {}", e))?;
 
+    let previous_mic = store.get("preferences")
+        .and_then(|value| value.get("preferred_mic_device").cloned())
+        .and_then(|value| value.as_str().map(str::to_owned));
+
     // Save to store
     store.set("preferences", prefs_value);
 
@@ -161,6 +165,10 @@ pub async fn save_recording_preferences<R: Runtime>(
         .map_err(|e| anyhow::anyhow!("Failed to save store to disk: {}", e))?;
 
     info!("Successfully persisted recording preferences to disk");
+
+    if previous_mic.as_deref() != preferences.preferred_mic_device.as_deref() {
+        crate::audio::wake_listener::microphone_changed();
+    }
 
     // Save backend preference to global config
     #[cfg(target_os = "macos")]

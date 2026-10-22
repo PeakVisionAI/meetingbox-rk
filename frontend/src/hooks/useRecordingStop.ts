@@ -33,7 +33,7 @@ interface UseRecordingStopReturn {
 }
 
 function stripProvisionalSpeakerPrefix(text: string): string {
-  return text.replace(/^(?:候选发言人|发言人待识别)[：:]\s*/, '').trim();
+  return text.replace(/(?:候选发言人|发言人\s*(?:待识别|\d+))[：:]\s*/g, '').trim();
 }
 
 export function finalizedSpeakerSegmentsToTranscripts(

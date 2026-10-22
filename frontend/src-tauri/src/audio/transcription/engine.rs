@@ -7,6 +7,11 @@ use log::{info, warn};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 
+#[tauri::command]
+pub fn get_asr_runtime_status() -> Option<super::rk_policy::AsrRuntimeStatus> {
+    super::rk_policy::runtime_status()
+}
+
 fn rk_transcript_config() -> crate::api::api::TranscriptConfig {
     crate::api::api::TranscriptConfig {
         provider: crate::database::repositories::setting::RK_TRANSCRIPT_PROVIDER.to_string(),
@@ -141,7 +146,7 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
                 .map_err(|error| error.to_string())?;
             match provider.check_ready().await {
                 Ok(true) => Ok(()),
-                Ok(false) => Err("RK ASR service is not ready".to_string()),
+                Ok(false) => Err(format!("{} service is not ready; ensure its file model is loaded", provider.provider_name())),
                 Err(error) => Err(error.to_string()),
             }
         }
@@ -190,6 +195,7 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
             info!("🎛️ Initializing RK3588 ASR service provider");
             let provider = super::rk_asr_provider::RkAsrProvider::local()
                 .map_err(|error| error.to_string())?;
+            info!("Using {} transcription service", provider.provider_name());
             Ok(TranscriptionEngine::Provider(Arc::new(provider)))
         }
         "parakeet" => {

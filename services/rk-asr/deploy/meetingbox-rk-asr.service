@@ -1,0 +1,25 @@
+[Unit]
+Description=MeetingBox SenseVoice RK3588 RKNN ASR
+After=network.target
+
+[Service]
+Type=simple
+User=meetingbox-asr
+Group=meetingbox-asr
+SupplementaryGroups=render video
+WorkingDirectory=/opt/meetingbox-rk/services/rk-asr
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=LD_LIBRARY_PATH=/opt/meetingbox-rk/services/rk-asr/models/lib
+ExecStart=/usr/bin/python3 /opt/meetingbox-rk/services/rk-asr/server.py --assets /opt/meetingbox-rk/services/rk-asr/models --port 8020
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+KillMode=control-group
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

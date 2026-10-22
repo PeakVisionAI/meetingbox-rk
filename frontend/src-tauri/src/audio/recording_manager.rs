@@ -450,6 +450,10 @@ impl RecordingManager {
         self.recording_saver.set_meeting_name(name);
     }
 
+    pub fn transcript_sink(&self) -> super::transcript_sink::TranscriptSink {
+        self.recording_saver.transcript_sink()
+    }
+
     /// Add a structured transcript segment to be saved later
     pub fn add_transcript_segment(&self, segment: super::recording_saver::TranscriptSegment) {
         self.recording_saver.add_transcript_segment(segment);

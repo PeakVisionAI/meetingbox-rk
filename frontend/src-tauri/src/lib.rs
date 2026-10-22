@@ -75,6 +75,7 @@ static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
     save_path: String,
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -82,6 +83,19 @@ struct TranscriptionStatus {
     chunks_in_queue: usize,
     is_processing: bool,
     last_activity_ms: u64,
+}
+
+#[tauri::command]
+fn get_voice_wake_status() -> audio::wake_listener::VoiceWakeStatus {
+    audio::wake_listener::status()
+}
+
+#[tauri::command]
+async fn set_voice_wake_enabled<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: bool,
+) -> audio::wake_listener::VoiceWakeStatus {
+    audio::wake_listener::set_enabled(&app, enabled).await
 }
 
 #[tauri::command]
@@ -153,7 +167,7 @@ async fn stop_recording<R: Runtime>(
     log_info!("Attempting to stop recording...");
 
     // Check the actual audio recording system state instead of the flag
-    if !audio::recording_commands::is_recording().await {
+    if args.session_id.is_none() && !audio::recording_commands::is_recording().await {
         log_info!("Recording is already stopped");
         return Ok(audio::recording_commands::StopRecordingResult::default());
     }
@@ -163,6 +177,7 @@ async fn stop_recording<R: Runtime>(
         app.clone(),
         audio::recording_commands::RecordingArgs {
             save_path: args.save_path.clone(),
+            session_id: args.session_id.clone(),
         },
     )
     .await
@@ -204,8 +219,7 @@ async fn stop_recording<R: Runtime>(
         }
         Err(e) => {
             log_error!("Failed to stop audio recording: {}", e);
-            // Still update the flag even if stopping failed
-            RECORDING_FLAG.store(false, Ordering::SeqCst);
+            RECORDING_FLAG.store(audio::recording_commands::recording_active(), Ordering::SeqCst);
             tray::update_tray_menu(&app);
             Err(format!("Failed to stop recording: {}", e))
         }
@@ -518,6 +532,7 @@ pub fn run() {
                 log::warn!("Failed to resolve resource directory for templates");
             }
 
+            audio::wake_listener::start(_app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -535,6 +550,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             start_recording,
             stop_recording,
+            get_voice_wake_status,
+            set_voice_wake_enabled,
             is_recording,
             system_power::system_power_action,
             get_transcription_status,
@@ -565,6 +582,7 @@ pub fn run() {
             analytics::commands::track_analytics_enabled,
             analytics::commands::track_analytics_disabled,
             analytics::commands::track_analytics_transparency_viewed,
+            audio::transcription::engine::get_asr_runtime_status,
             whisper_engine::commands::whisper_init,
             whisper_engine::commands::whisper_get_available_models,
             whisper_engine::commands::whisper_load_model,
@@ -801,6 +819,7 @@ pub fn run() {
                 tauri::RunEvent::Exit => {
                     log::info!("Application exiting, cleaning up resources...");
                     tauri::async_runtime::block_on(async {
+                        audio::wake_listener::shutdown().await;
                         // Clean up database connection and checkpoint WAL
                         if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
                             log::info!("Starting database cleanup...");

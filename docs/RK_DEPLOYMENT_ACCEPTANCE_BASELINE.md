@@ -4,6 +4,8 @@
 基线日期：2026-08-12  
 适用范围：Ubuntu（RK3588/aarch64）+ RK1828 双设备部署、Meetily-RK 推理适配与后续验收
 
+2026-10-14 开发补充：新增可选 `rk-npu` 客户端策略，要求 SenseVoice RKNN 实际后端元数据，并支持显式 BossAI FunASR CPU 回退。另提供可复现的 [SenseVoice RKNN 服务部署包](../services/rk-asr/README.md)，含固定上游资产下载校验与 systemd 模板；新增服务没有说话人校准模型。这些新增能力尚未完成目标机验收，不替换本文既有默认链路和 Paraformer 回退基线；详见 [RK NPU 适配](RK_NPU_ADAPTATION.md)。
+
 ## 1. 基线原则
 
 - Meetily 是产品界面、会议数据和工作流主体，RK3588/RK1828 提供可替换的推理服务。

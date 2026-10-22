@@ -12,7 +12,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tokio::task::JoinHandle;
+use super::transcription::task::TranscriptionTask;
 
 use super::{
     parse_audio_device,
@@ -39,10 +39,17 @@ pub use super::transcription::TranscriptUpdate;
 
 // Simple recording state tracking
 static IS_RECORDING: AtomicBool = AtomicBool::new(false);
+static RECORDING_SESSION: Mutex<Option<String>> = Mutex::new(None);
+static LIVE_TRANSCRIPT: Mutex<Option<super::live_transcript::LiveTranscript>> = Mutex::new(None);
 
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
-static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+static TRANSCRIPTION_TASK: Mutex<Option<TranscriptionTask>> = Mutex::new(None);
+static ASR_OPERATION: Mutex<Option<super::transcription::rk_policy::AsrOperationGuard>> = Mutex::new(None);
+static STOP_RECORDING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+// Held for the whole meeting so the wake listener keeps its microphone open and
+// switches to the stop-meeting command set instead of standing down.
+static MEETING_VOICE: Mutex<Option<super::wake_listener::MeetingVoice>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
@@ -54,6 +61,7 @@ static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
 #[derive(Debug, Deserialize)]
 pub struct RecordingArgs {
     pub save_path: String,
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -88,6 +96,12 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         meeting_name
     );
 
+    let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
+        .map_err(|error| error.to_string())?;
+    // Announce the meeting before opening devices: the idle voice capture then
+    // stays on the same microphone for the whole session instead of being
+    // reaped and restarted while the recording pipeline is still starting.
+    let meeting_voice = super::wake_listener::meeting_started();
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
@@ -223,11 +237,17 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         let _ = app_for_error.emit("recording-error", error.user_message());
     });
 
+    let recording_session = uuid::Uuid::new_v4().to_string();
+    let live_transcript = super::live_transcript::start(app.clone(), recording_session.clone()).await;
+
     // Start recording with resolved devices (replaces start_recording_with_defaults_and_auto_save call)
     let transcription_receiver = manager
         .start_recording(microphone_device, system_device, auto_save)
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
+
+    let transcript_sink = manager.transcript_sink();
+    let correction_folder = manager.get_meeting_folder();
 
     // Store the manager globally to keep it alive
     {
@@ -237,16 +257,14 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
+    *RECORDING_SESSION.lock().unwrap() = Some(recording_session.clone());
+    *LIVE_TRANSCRIPT.lock().unwrap() = live_transcript;
     IS_RECORDING.store(true, Ordering::SeqCst);
+    *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
+    *MEETING_VOICE.lock().unwrap() = Some(meeting_voice);
+
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
-
-    // Start optimized parallel transcription task and store handle
-    let task_handle = transcription::start_transcription_task(app.clone(), transcription_receiver);
-    {
-        let mut global_task = TRANSCRIPTION_TASK.lock().unwrap();
-        *global_task = Some(task_handle);
-    }
 
     // CRITICAL: Listen for transcript-update events and save to recording manager
     // This enables transcript history persistence for page reload sync
@@ -268,11 +286,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                     sequence_id: update.sequence_id,
                 };
 
-                // Save to recording manager
-                if let Ok(manager_guard) = RECORDING_MANAGER.lock() {
-                    if let Some(manager) = manager_guard.as_ref() {
-                        manager.add_transcript_segment(segment);
-                    }
+                if let Err(error) = transcript_sink.upsert(segment) {
+                    warn!("Failed to persist transcript update: {}", error);
                 }
             }
         });
@@ -280,6 +295,12 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         *global_listener = Some(listener_id);
         info!("✅ Transcript-update event listener registered for history persistence");
     }
+
+    // Register persistence before the worker can publish the first segment.
+    let task_handle = transcription::start_transcription_task(
+        app.clone(), transcription_receiver, recording_session, correction_folder,
+    );
+    *TRANSCRIPTION_TASK.lock().unwrap() = Some(task_handle);
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
@@ -317,6 +338,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         mic_device_name, system_device_name, meeting_name
     );
 
+    let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
+        .map_err(|error| error.to_string())?;
+    // Announce the meeting before opening devices: the idle voice capture then
+    // stays on the same microphone for the whole session instead of being
+    // reaped and restarted while the recording pipeline is still starting.
+    let meeting_voice = super::wake_listener::meeting_started();
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
     // Check if already recording
@@ -411,11 +438,17 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         let _ = app_for_error.emit("recording-error", error.user_message());
     });
 
+    let recording_session = uuid::Uuid::new_v4().to_string();
+    let live_transcript = super::live_transcript::start(app.clone(), recording_session.clone()).await;
+
     // Start recording with specified devices and auto_save setting
     let transcription_receiver = manager
         .start_recording(mic_device, system_device, auto_save)
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
+
+    let transcript_sink = manager.transcript_sink();
+    let correction_folder = manager.get_meeting_folder();
 
     // Store the manager globally to keep it alive
     {
@@ -425,16 +458,14 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
+    *RECORDING_SESSION.lock().unwrap() = Some(recording_session.clone());
+    *LIVE_TRANSCRIPT.lock().unwrap() = live_transcript;
     IS_RECORDING.store(true, Ordering::SeqCst);
+    *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
+    *MEETING_VOICE.lock().unwrap() = Some(meeting_voice);
+
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
-
-    // Start optimized parallel transcription task and store handle
-    let task_handle = transcription::start_transcription_task(app.clone(), transcription_receiver);
-    {
-        let mut global_task = TRANSCRIPTION_TASK.lock().unwrap();
-        *global_task = Some(task_handle);
-    }
 
     // CRITICAL: Listen for transcript-update events and save to recording manager
     // This enables transcript history persistence for page reload sync
@@ -456,11 +487,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                     sequence_id: update.sequence_id,
                 };
 
-                // Save to recording manager
-                if let Ok(manager_guard) = RECORDING_MANAGER.lock() {
-                    if let Some(manager) = manager_guard.as_ref() {
-                        manager.add_transcript_segment(segment);
-                    }
+                if let Err(error) = transcript_sink.upsert(segment) {
+                    warn!("Failed to persist transcript update: {}", error);
                 }
             }
         });
@@ -468,6 +496,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         *global_listener = Some(listener_id);
         info!("✅ Transcript-update event listener registered for history persistence");
     }
+
+    // Register persistence before the worker can publish the first segment.
+    let task_handle = transcription::start_transcription_task(
+        app.clone(), transcription_receiver, recording_session, correction_folder,
+    );
+    *TRANSCRIPTION_TASK.lock().unwrap() = Some(task_handle);
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
@@ -501,8 +535,15 @@ async fn refresh_hotwords<R: Runtime>(app: &AppHandle<R>) {
 /// Stop recording with optimized graceful shutdown ensuring NO transcript chunks are lost
 pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
-    _args: RecordingArgs,
+    args: RecordingArgs,
 ) -> Result<StopRecordingResult, String> {
+    let _stop_guard = STOP_RECORDING_LOCK.lock().await;
+    if let Some(expected) = args.session_id.as_deref() {
+        if RECORDING_SESSION.lock().unwrap().as_deref() != Some(expected)
+            || !IS_RECORDING.load(Ordering::SeqCst) {
+            return Err("语音结束请求对应的会议已变更".into());
+        }
+    }
     info!(
         "🛑 Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
     );
@@ -512,6 +553,8 @@ pub async fn stop_recording<R: Runtime>(
         info!("Recording was not active");
         return Ok(StopRecordingResult::default());
     }
+
+    let _voice_stop = super::wake_listener::meeting_stopping();
 
     // Emit shutdown progress to frontend
     let _ = app.emit(
@@ -548,19 +591,16 @@ pub async fn stop_recording<R: Runtime>(
             info!("✅ Audio streams stopped successfully - no more chunks will be created");
         }
         Err(e) => {
+            // Preserve ownership and the listener so a failed stop can be retried.
+            *RECORDING_MANAGER.lock().unwrap() = manager_for_cleanup;
             error!("❌ Failed to stop audio streams: {}", e);
             return Err(format!("Failed to stop audio streams: {}", e));
         }
     }
 
-    // Step 1.5: Clean up transcript listener to release microphone
-    // Unlisten transcript-update event to prevent lingering references
-    {
-        use tauri::Listener;
-        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
-            app.unlisten(listener_id);
-            info!("✅ Transcript-update listener removed");
-        }
+    let live_transcript = LIVE_TRANSCRIPT.lock().unwrap().take();
+    if let Some(live_transcript) = live_transcript {
+        live_transcript.stop().await;
     }
 
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
@@ -573,14 +613,15 @@ pub async fn stop_recording<R: Runtime>(
         }),
     );
 
-    // Wait for transcription task with enhanced progress monitoring (NO TIMEOUT - we must process all chunks)
+    // Drain pending transcription within the shutdown deadline, then cancel and join.
     let transcription_task = {
         let mut global_task = TRANSCRIPTION_TASK.lock().unwrap();
         global_task.take()
     };
 
     if let Some(task_handle) = transcription_task {
-        info!("⏳ Waiting for ALL transcription chunks to be processed (no timeout - preserving every chunk)");
+        let drain_timeout = super::transcription::rk_policy::shutdown_timeout();
+        info!("⏳ Waiting up to {} seconds for pending transcription chunks", drain_timeout.as_secs());
 
         // Enhanced progress monitoring during shutdown
         let progress_app = app.clone();
@@ -606,20 +647,20 @@ pub async fn stop_recording<R: Runtime>(
         });
 
         // Wait for remaining chunks, but do not freeze the UI if ASR is stuck.
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(45),
-            task_handle
-        ).await {
-            Ok(Ok(())) => {
+        match task_handle.finish(drain_timeout).await {
+            Ok(true) => {
                 info!("✅ ALL transcription chunks processed successfully - no data lost");
             }
-            Ok(Err(e)) => {
+            Err(e) => {
+                super::transcription::rk_policy::mark_incomplete_session();
                 warn!("⚠️ Transcription task completed with error: {:?}", e);
                 // Continue anyway - the worker may have processed most chunks
             }
-            Err(_) => {
-                warn!("⏱️ Transcription timeout reached, continuing shutdown");
-                // Continue shutdown even on timeout - better to lose some chunks than hang forever
+            Ok(false) => {
+                super::transcription::rk_policy::mark_incomplete_session();
+                warn!("⏱️ Transcription timeout reached; workers cancelled and joined");
+                let _ = app.emit("transcription-warning",
+                    "转写等待超时，剩余片段已停止处理，可使用原始录音重新转写");
             }
         }
 
@@ -627,6 +668,19 @@ pub async fn stop_recording<R: Runtime>(
         progress_task.abort();
     } else {
         info!("ℹ️ No transcription task found to wait for");
+    }
+
+    // No worker can publish after drain/cancel-and-join. Persist its final tail.
+    {
+        use tauri::Listener;
+        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
+            app.unlisten(listener_id);
+        }
+    }
+    if let Some(manager) = manager_for_cleanup.as_ref() {
+        if let Err(error) = manager.transcript_sink().flush() {
+            warn!("Failed to flush final transcript tail: {}", error);
+        }
     }
 
     let _ = app.emit(
@@ -879,6 +933,7 @@ pub async fn stop_recording<R: Runtime>(
     // Set recording flag to false
     info!("🔍 Setting IS_RECORDING to false");
     IS_RECORDING.store(false, Ordering::SeqCst);
+    RECORDING_SESSION.lock().unwrap().take();
 
     // Step 4.5: Prepare metadata for frontend (NO database save)
     // NOTE: We do NOT save to database here. The frontend will save after all transcripts are displayed.
@@ -897,6 +952,11 @@ pub async fn stop_recording<R: Runtime>(
 
     // Database save removed - frontend will handle this after receiving all transcripts
     info!("ℹ️ Skipping database save in Rust - frontend will save after all transcripts received");
+
+    // Release operation ownership only after all workers and calibration finish.
+    ASR_OPERATION.lock().unwrap().take();
+    // Dropping the guard returns the voice listener to the idle command set.
+    MEETING_VOICE.lock().unwrap().take();
 
     // Step 5: Complete shutdown
     let _ = app.emit(
@@ -930,7 +990,17 @@ pub async fn stop_recording<R: Runtime>(
 
 /// Check if recording is active
 pub async fn is_recording() -> bool {
+    recording_active()
+}
+
+/// Synchronous view of the same flag, for callers that cannot await (the voice
+/// wake listener chooses its command set from it).
+pub fn recording_active() -> bool {
     IS_RECORDING.load(Ordering::SeqCst)
+}
+
+pub fn recording_session_id() -> Option<String> {
+    RECORDING_SESSION.lock().unwrap().clone()
 }
 
 /// Get recording statistics
@@ -956,6 +1026,7 @@ pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
     if let Some(manager) = manager_guard.as_ref() {
         manager.pause_recording().map_err(|e| e.to_string())?;
+        super::live_transcript::pause();
 
         // Emit pause event to frontend
         app.emit(
@@ -1031,6 +1102,7 @@ pub async fn get_recording_state() -> serde_json::Value {
         let is_paused = manager.is_paused();
         serde_json::json!({
             "is_recording": is_recording,
+            "session_id": recording_session_id(),
             "is_paused": is_paused,
             "is_active": manager.is_active(),
             "speech_active": is_recording && !is_paused && super::pipeline::is_speech_active(),
@@ -1042,6 +1114,7 @@ pub async fn get_recording_state() -> serde_json::Value {
     } else {
         serde_json::json!({
             "is_recording": is_recording,
+            "session_id": recording_session_id(),
             "is_paused": false,
             "is_active": false,
             "speech_active": false,

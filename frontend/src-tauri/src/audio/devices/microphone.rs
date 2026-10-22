@@ -6,7 +6,7 @@ use super::capture_guard::{is_generic_capture_alias, is_linux_onboard_capture};
 #[cfg(target_os = "linux")]
 use super::capture_guard::{
     is_linux_meeting_microphone, is_raw_alsa_pcm_name, list_pulse_input_source_names,
-    set_pulse_default_source,
+    meeting_microphone_score, set_pulse_default_source,
 };
 use super::configuration::{parse_audio_device, AudioDevice, DeviceType};
 
@@ -38,7 +38,7 @@ pub fn find_linux_meeting_microphone() -> Result<Option<AudioDevice>> {
             if !is_linux_meeting_microphone(&name) {
                 continue;
             }
-            ranked.push((meeting_mic_score(&name), name));
+            ranked.push((meeting_microphone_score(&name), name));
         }
         let host = cpal::default_host();
         for device in host.input_devices()? {
@@ -51,7 +51,7 @@ pub fn find_linux_meeting_microphone() -> Result<Option<AudioDevice>> {
             if ranked.iter().any(|(_, existing)| existing == &name) {
                 continue;
             }
-            ranked.push((meeting_mic_score(&name), name));
+            ranked.push((meeting_microphone_score(&name), name));
         }
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         if let Some((_, name)) = ranked.into_iter().next() {
@@ -59,20 +59,6 @@ pub fn find_linux_meeting_microphone() -> Result<Option<AudioDevice>> {
             return Ok(Some(AudioDevice::new(name, DeviceType::Input)));
         }
         Ok(None)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn meeting_mic_score(name: &str) -> u8 {
-    let lower = name.to_ascii_lowercase();
-    if lower.contains("powerconf") || lower.contains("mn108") {
-        if lower.contains("alsa_input") {
-            3
-        } else {
-            2
-        }
-    } else {
-        1
     }
 }
 

@@ -6,24 +6,12 @@ use tauri::{AppHandle, Runtime, Emitter};
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+pub use super::transcript_sink::TranscriptSegment;
+use super::transcript_sink::TranscriptSink;
 
 use super::recording_state::AudioChunk;
 use super::audio_processing::create_meeting_folder;
 use super::incremental_saver::IncrementalAudioSaver;
-
-/// Structured transcript segment for JSON export
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TranscriptSegment {
-    pub id: String,
-    pub text: String,
-    pub audio_start_time: f64, // Seconds from recording start
-    pub audio_end_time: f64,   // Seconds from recording start
-    pub duration: f64,          // Segment duration in seconds
-    pub display_time: String,   // Formatted time for display like "[02:15]"
-    pub confidence: f32,
-    pub sequence_id: u64,
-}
 
 /// Meeting metadata structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,13 +41,10 @@ pub struct RecordingSaver {
     meeting_folder: Option<PathBuf>,
     meeting_name: Option<String>,
     metadata: Option<MeetingMetadata>,
-    transcript_segments: Arc<Mutex<Vec<TranscriptSegment>>>,
+    transcript_sink: TranscriptSink,
     chunk_receiver: Option<mpsc::UnboundedReceiver<AudioChunk>>,
     is_saving: Arc<Mutex<bool>>,
-    last_transcript_write: Arc<Mutex<Option<Instant>>>,
 }
-
-const TRANSCRIPT_WRITE_INTERVAL: Duration = Duration::from_secs(5);
 
 impl RecordingSaver {
     pub fn new() -> Self {
@@ -68,10 +53,9 @@ impl RecordingSaver {
             meeting_folder: None,
             meeting_name: None,
             metadata: None,
-            transcript_segments: Arc::new(Mutex::new(Vec::new())),
+            transcript_sink: TranscriptSink::new(None),
             chunk_receiver: None,
             is_saving: Arc::new(Mutex::new(false)),
-            last_transcript_write: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -96,42 +80,15 @@ impl RecordingSaver {
         }
     }
 
-    /// Add or update a structured transcript segment (upserts based on sequence_id)
-    /// Also saves incrementally to disk
+    /// Add or update a structured transcript segment (upserts based on sequence_id).
     pub fn add_transcript_segment(&self, segment: TranscriptSegment) {
-        if let Ok(mut segments) = self.transcript_segments.lock() {
-            // Check if segment with same sequence_id exists (update it)
-            if let Some(existing) = segments.iter_mut().find(|s| s.sequence_id == segment.sequence_id) {
-                *existing = segment.clone();
-                info!("Updated transcript segment {} (seq: {}) - total segments: {}",
-                      segment.id, segment.sequence_id, segments.len());
-            } else {
-                // New segment, add it
-                segments.push(segment.clone());
-                info!("Added new transcript segment {} (seq: {}) - total segments: {}",
-                      segment.id, segment.sequence_id, segments.len());
-            }
-        } else {
-            error!("Failed to lock transcript segments for adding segment {}", segment.id);
+        if let Err(e) = self.transcript_sink.upsert(segment) {
+            warn!("Failed to save transcript segment: {}", e);
         }
+    }
 
-        // Limit full-file rewrites during long meetings. The final stop path
-        // always writes the complete transcript immediately.
-        let should_write = self.last_transcript_write.lock().map(|mut last| {
-            let now = Instant::now();
-            let due = last.map_or(true, |previous| now.duration_since(previous) >= TRANSCRIPT_WRITE_INTERVAL);
-            if due {
-                *last = Some(now);
-            }
-            due
-        }).unwrap_or(true);
-        if should_write {
-            if let Some(folder) = &self.meeting_folder {
-                if let Err(e) = self.write_transcripts_json(folder) {
-                    warn!("Failed to write incremental transcript update: {}", e);
-                }
-            }
-        }
+    pub fn transcript_sink(&self) -> TranscriptSink {
+        self.transcript_sink.clone()
     }
 
     /// Legacy method for backward compatibility - converts text to basic segment
@@ -154,11 +111,11 @@ impl RecordingSaver {
     /// # Arguments
     /// * `auto_save` - If true, creates checkpoints and enables saving. If false, audio chunks are discarded.
     pub fn start_accumulation(&mut self, auto_save: bool) -> mpsc::UnboundedSender<AudioChunk> {
-        // Each meeting gets its own persistence cadence even though the manager
-        // reuses this saver instance across recordings.
-        if let Ok(mut last) = self.last_transcript_write.lock() {
-            *last = None;
-        }
+        // New session state prevents old listener handles writing into a new meeting.
+        self.transcript_sink = TranscriptSink::new(None);
+        self.meeting_folder = None;
+        self.metadata = None;
+        self.incremental_saver = None;
         if auto_save {
             info!("Initializing incremental audio saver for recording (auto-save ENABLED)");
         } else {
@@ -285,6 +242,7 @@ impl RecordingSaver {
         // Write initial metadata.json
         self.write_metadata(&meeting_folder, &metadata)?;
 
+        self.transcript_sink.set_folder(meeting_folder.clone())?;
         self.meeting_folder = Some(meeting_folder);
         self.metadata = Some(metadata);
 
@@ -303,59 +261,9 @@ impl RecordingSaver {
         Ok(())
     }
 
-    /// Write transcripts.json to disk (atomic write with temp file and validation)
-    fn write_transcripts_json(&self, folder: &PathBuf) -> Result<()> {
-        // Clone segments to avoid holding lock during I/O
-        let segments_clone = if let Ok(segments) = self.transcript_segments.lock() {
-            segments.clone()
-        } else {
-            error!("Failed to lock transcript segments for writing");
-            return Err(anyhow::anyhow!("Failed to lock transcript segments"));
-        };
-
-        info!("Writing {} transcript segments to JSON", segments_clone.len());
-
-        let transcript_path = folder.join("transcripts.json");
-        let temp_path = folder.join(".transcripts.json.tmp");
-
-        // Create JSON structure
-        let json = serde_json::json!({
-            "version": "1.0",
-            "segments": segments_clone,
-            "last_updated": chrono::Utc::now().to_rfc3339(),
-            "total_segments": segments_clone.len()
-        });
-
-        // Serialize to pretty JSON string
-        let json_string = serde_json::to_string_pretty(&json)
-            .map_err(|e| {
-                error!("Failed to serialize transcripts to JSON: {}", e);
-                anyhow::anyhow!("JSON serialization failed: {}", e)
-            })?;
-
-        // Write to temp file with error handling
-        std::fs::write(&temp_path, &json_string)
-            .map_err(|e| {
-                error!("Failed to write transcript temp file to {}: {}", temp_path.display(), e);
-                anyhow::anyhow!("Failed to write temp file: {}", e)
-            })?;
-
-        // Verify temp file was written correctly
-        if !temp_path.exists() {
-            error!("Temp transcript file does not exist after write: {}", temp_path.display());
-            return Err(anyhow::anyhow!("Temp file verification failed"));
-        }
-
-        // Atomic rename
-        std::fs::rename(&temp_path, &transcript_path)
-            .map_err(|e| {
-                error!("Failed to rename transcript file from {} to {}: {}",
-                       temp_path.display(), transcript_path.display(), e);
-                anyhow::anyhow!("Failed to rename transcript file: {}", e)
-            })?;
-
-        info!("✅ Successfully wrote transcripts.json with {} segments", segments_clone.len());
-        Ok(())
+    /// Flushes through the session sink, serialized with incremental writes.
+    fn write_transcripts_json(&self, _folder: &PathBuf) -> Result<()> {
+        self.transcript_sink.flush()
     }
 
     // in frontend/src-tauri/src/audio/recording_saver.rs
@@ -391,31 +299,17 @@ impl RecordingSaver {
         // Give time for final chunks
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-        // Check if incremental saver exists (indicates auto_save was enabled)
-        let should_save_audio = self.incremental_saver.is_some();
+        // Always flush transcripts, including meetings that do not save audio.
+        self.transcript_sink.flush().map_err(|e| format!("Failed to save transcripts: {}", e))?;
 
-        if !should_save_audio {
-            info!("⚠️  No audio saver initialized (auto-save was disabled) - skipping audio finalization");
-            info!("✅ Transcripts and metadata already saved incrementally");
-            return Ok(None);
-        }
-
-        // Finalize incremental saver (merge checkpoints into final audio.mp4)
         let final_audio_path = if let Some(saver_arc) = &self.incremental_saver {
             let mut saver = saver_arc.lock().await;
             match saver.finalize().await {
-                Ok(path) => {
-                    info!("✅ Successfully finalized audio: {}", path.display());
-                    path
-                }
-                Err(e) => {
-                    error!("❌ Failed to finalize incremental saver: {}", e);
-                    return Err(format!("Failed to finalize audio: {}", e));
-                }
+                Ok(path) => Some(path),
+                Err(e) => return Err(format!("Failed to finalize audio: {}", e)),
             }
         } else {
-            error!("No incremental saver initialized - cannot save recording");
-            return Err("No incremental saver initialized".to_string());
+            None
         };
 
         // Save final transcripts.json with validation
@@ -442,11 +336,7 @@ impl RecordingSaver {
             // Use actual recording duration from RecordingState (more accurate than transcript segments)
             // Falls back to last transcript segment if duration not provided
             metadata.duration_seconds = recording_duration.or_else(|| {
-                if let Ok(segments) = self.transcript_segments.lock() {
-                    segments.last().map(|seg| seg.audio_end_time)
-                } else {
-                    None
-                }
+                self.transcript_sink.snapshot().last().map(|seg| seg.audio_end_time)
             });
 
             if let Err(e) = self.write_metadata(folder, &metadata) {
@@ -459,7 +349,7 @@ impl RecordingSaver {
 
         // Emit save event with audio and transcript paths
         let save_event = serde_json::json!({
-            "audio_file": final_audio_path.to_string_lossy(),
+            "audio_file": final_audio_path.as_ref().map(|path| path.to_string_lossy().to_string()),
             "transcript_file": self.meeting_folder.as_ref()
                 .map(|f| f.join("transcripts.json").to_string_lossy().to_string()),
             "meeting_name": self.meeting_name,
@@ -472,11 +362,9 @@ impl RecordingSaver {
         }
 
         // Clean up transcript segments
-        if let Ok(mut segments) = self.transcript_segments.lock() {
-            segments.clear();
-        }
+        self.transcript_sink.clear();
 
-        Ok(Some(final_audio_path.to_string_lossy().to_string()))
+        Ok(final_audio_path.map(|path| path.to_string_lossy().to_string()))
     }
 
     /// Get the meeting folder path (for passing to backend)
@@ -486,11 +374,7 @@ impl RecordingSaver {
 
     /// Get accumulated transcript segments (for reload sync)
     pub fn get_transcript_segments(&self) -> Vec<TranscriptSegment> {
-        if let Ok(segments) = self.transcript_segments.lock() {
-            segments.clone()
-        } else {
-            Vec::new()
-        }
+        self.transcript_sink.snapshot()
     }
 
     /// Get meeting name (for reload sync)

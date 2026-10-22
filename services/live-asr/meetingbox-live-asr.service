@@ -1,0 +1,29 @@
+[Unit]
+Description=Meetingbox single Paraformer streaming preview worker
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/meetingbox-live-asr
+ExecStart=/home/ubuntu/meetingbox-voice-0.4.2/bossai-asr-reuse/env/bin/python /home/ubuntu/meetingbox-live-asr/serve.py
+Environment=BOSSAI_ASR_SERVER_DIR=/home/ubuntu/meetingbox-voice-0.4.2/bossai-asr-reuse/server
+Environment=BOSSAI_STREAM_MODEL=/home/ubuntu/meetingbox-voice-0.4.2/bossai-asr-reuse/models-root/models/iic--speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online/snapshots/master
+Environment=BOSSAI_ASR_MODEL_DIR=/home/ubuntu/meetingbox-voice-0.4.2/bossai-asr-reuse/models-root
+Environment=MODELSCOPE_CACHE=/home/ubuntu/meetingbox-voice-0.4.2/bossai-asr-reuse/models-root
+Environment=ASR_PORT=8002
+Environment=BOSSAI_LOCAL_CPU_THREADS=1
+Environment=BOSSAI_STREAM_INT8=1
+Restart=on-failure
+RestartSec=10
+CPUAffinity=4 5 6 7
+MemoryHigh=3584M
+MemoryMax=4G
+MemorySwapMax=256M
+OOMPolicy=stop
+NoNewPrivileges=true
+UMask=0077
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
