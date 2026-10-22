@@ -116,30 +116,22 @@ export function useRecordingStart(
 
   // Handle manual recording start (from button click)
   const handleRecordingStart = useCallback(async (titleOverride?: string) => {
-    if (startInFlightRef.current) {
+    if (startInFlightRef.current || isRecording) {
       return;
     }
     startInFlightRef.current = true;
     try {
-      window.dispatchEvent(new CustomEvent('recording-start-stage', {detail:'正在检查录音状态'}));
       if (await recordingService.isRecording()) {
         setIsRecording(true);
         setIsMeetingActive(true);
         return;
       }
-      // Reconcile stale page state after returning from a saved meeting.
-      setIsRecording(false);
-      setIsMeetingActive(false);
 
       console.log('handleRecordingStart called - checking transcription provider', transcriptModelConfig.provider);
 
       if (!(await ensureTranscriptionReady('home_page'))) {
-        throw new Error('语音模型尚未就绪，请完成模型准备后重试');
+        return;
       }
-
-      window.dispatchEvent(new CustomEvent('local-services-check-start'));
-      try { await invoke('ensure_local_services'); }
-      finally { window.dispatchEvent(new CustomEvent('local-services-check-end')); }
 
       console.log('Transcription provider ready - setting up meeting title and state');
 
@@ -154,8 +146,7 @@ export function useRecordingStart(
       setCurrentMeeting({ id: 'active-recording', title: randomTitle });
 
       // Set STARTING status before initiating backend recording
-      window.dispatchEvent(new CustomEvent('recording-start-stage', {detail:'正在初始化录音设备'}));
-      setStatus(RecordingStatus.STARTING, '正在初始化录音设备');
+      setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
       // Start the actual backend recording
       console.log('Starting backend recording with meeting:', randomTitle);

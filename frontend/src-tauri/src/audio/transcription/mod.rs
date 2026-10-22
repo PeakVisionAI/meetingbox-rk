@@ -8,7 +8,6 @@ pub mod parakeet_provider;
 pub mod rk_asr_provider;
 pub mod engine;
 pub mod worker;
-pub mod asrserve_stream;
 
 // Re-export commonly used types
 pub use provider::{TranscriptionError, TranscriptionProvider, TranscriptResult};

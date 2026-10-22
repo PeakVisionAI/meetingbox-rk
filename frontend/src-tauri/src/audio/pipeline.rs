@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::collections::VecDeque;
@@ -57,10 +57,13 @@ impl AudioMixerRingBuffer {
 
     fn add_samples(&mut self, device_type: DeviceType, samples: Vec<f32>) {
         // Log buffer health periodically for diagnostics
-        static SAMPLE_COUNTER: AtomicU64 = AtomicU64::new(0);
-        if SAMPLE_COUNTER.fetch_add(1, Ordering::Relaxed) % 200 == 199 {
-            debug!("📊 Ring buffer status: mic={} samples, sys={} samples (max={})",
-                   self.mic_buffer.len(), self.system_buffer.len(), self.max_buffer_size);
+        static mut SAMPLE_COUNTER: u64 = 0;
+        unsafe {
+            SAMPLE_COUNTER += 1;
+            if SAMPLE_COUNTER % 200 == 0 {
+                debug!("📊 Ring buffer status: mic={} samples, sys={} samples (max={})",
+                       self.mic_buffer.len(), self.system_buffer.len(), self.max_buffer_size);
+            }
         }
 
         match device_type {
@@ -213,7 +216,7 @@ const ENERGY_SPEECH_RMS: f32 = 0.025;
 // Do not normalize near-silent input. Amplifying a USB/ALSA noise floor makes
 // Silero treat silence as speech and causes ASR hallucinations.
 const VAD_NORMALIZATION_MIN_PEAK: f32 = 0.01;
-fn live_window_samples() -> usize { if super::transcription::asrserve_stream::enabled() { 3200 } else { 32000 } } // 200ms transport for continuous ASR
+const ENERGY_MIN_SAMPLES_16K: usize = 32000; // 2s before a live emit
 const ENERGY_FLUSH_MIN_SAMPLES_16K: usize = 32000; // 2s on stop
 const MAX_HOLDING_QUIET_WINDOWS: u32 = 10; // 1s at the 100ms mix-window cadence
 
@@ -825,8 +828,7 @@ impl AudioPipeline {
     }
 
     fn send_transcription_16k(&mut self, samples: Vec<f32>, reason: &str) {
-        let minimum = if super::transcription::asrserve_stream::enabled() { 1 } else { ENERGY_FLUSH_MIN_SAMPLES_16K };
-        if samples.len() < minimum {
+        if samples.len() < ENERGY_FLUSH_MIN_SAMPLES_16K {
             info!(
                 "⏭️ Skipping short {} segment: {} samples (< {} = 1s)",
                 reason,
@@ -861,22 +863,22 @@ impl AudioPipeline {
 
     fn emit_energy_fallback(&mut self) {
         let mut data = std::mem::take(&mut self.energy_fallback_16k);
-        if data.len() < live_window_samples() {
+        if data.len() < ENERGY_FLUSH_MIN_SAMPLES_16K {
             self.energy_fallback_16k.clear();
             return;
         }
-        while data.len() >= live_window_samples() {
-            let chunk: Vec<f32> = data.drain(..live_window_samples()).collect();
+        while data.len() >= ENERGY_MIN_SAMPLES_16K {
+            let chunk: Vec<f32> = data.drain(..ENERGY_MIN_SAMPLES_16K).collect();
             self.send_transcription_16k(chunk, "fixed-speech-window");
         }
-        if data.len() >= 800 || (super::transcription::asrserve_stream::enabled() && !data.is_empty()) {
+        if data.len() >= 800 {
             self.energy_fallback_16k = data;
         }
     }
 
     fn emit_remaining_speech(&mut self, reason: &str) {
         let remaining = std::mem::take(&mut self.energy_fallback_16k);
-        if remaining.len() >= 800 || (super::transcription::asrserve_stream::enabled() && !remaining.is_empty()) {
+        if remaining.len() >= 800 {
             self.send_transcription_16k(remaining, reason);
         }
     }
@@ -996,14 +998,14 @@ impl AudioPipeline {
                                 self.vad_processor.clear_holding_speech();
                             }
                             SPEECH_ACTIVE.store(speech_detected, Ordering::Relaxed);
-                            if speech_detected || super::transcription::asrserve_stream::enabled() {
+                            if speech_detected {
                                 self.energy_quiet_windows = 0;
                                 let resampled = downsample_for_energy_fallback(
                                     &mixed_with_gain,
                                     self.sample_rate,
                                 );
                                 self.energy_fallback_16k.extend_from_slice(&resampled);
-                                if self.energy_fallback_16k.len() >= live_window_samples() {
+                                if self.energy_fallback_16k.len() >= ENERGY_MIN_SAMPLES_16K {
                                     self.emit_energy_fallback();
                                 }
                             } else {
@@ -1069,7 +1071,7 @@ impl AudioPipeline {
             }
         }
 
-        if self.energy_fallback_16k.len() >= live_window_samples() {
+        if self.energy_fallback_16k.len() >= ENERGY_FLUSH_MIN_SAMPLES_16K {
             info!(
                 "🎚️ Fixed speech-window flush emitting {} samples",
                 self.energy_fallback_16k.len()

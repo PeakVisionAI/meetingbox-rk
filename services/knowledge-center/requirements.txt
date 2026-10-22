@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-httpx
-python-docx==1.2.0
-torch
-transformers
-requests

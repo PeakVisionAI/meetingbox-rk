@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Runtime};
 
 // Sequence counter for transcript updates
-static SEQUENCE_COUNTER: AtomicU64 = AtomicU64::new(1);
+static SEQUENCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Speech detection flag - reset per recording session
 static SPEECH_DETECTED_EMITTED: AtomicBool = AtomicBool::new(false);
@@ -65,14 +65,6 @@ pub struct TranscriptUpdate {
     pub audio_start_time: f64, // Seconds from recording start (e.g., 125.3)
     pub audio_end_time: f64,   // Seconds from recording start (e.g., 128.6)
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
-}
-
-pub fn emit_continuous_segment<R: Runtime>(app: &AppHandle<R>, mut update: TranscriptUpdate) {
-    if update.sequence_id == 0 { update.sequence_id = SEQUENCE_COUNTER.fetch_add(1, Ordering::SeqCst); }
-    if !SPEECH_DETECTED_EMITTED.swap(true, Ordering::SeqCst) {
-        let _=app.emit("speech-detected",serde_json::json!({"message":"Speech activity detected"}));
-    }
-    let _=app.emit("transcript-update",update);
 }
 
 // NOTE: get_transcript_history and get_recording_meeting_name functions
@@ -402,12 +394,6 @@ pub fn start_transcription_task<R: Runtime>(
             }
         }
 
-        if super::asrserve_stream::enabled() {
-            if let Err(error)=super::asrserve_stream::end(&app).await {
-                let _=app.emit("transcription-error",serde_json::json!({"userMessage":"实时转写收尾失败，原始录音仍保留。","error":error}));
-            }
-        }
-
         // Final verification with retry logic to catch any stragglers
         let mut verification_attempts = 0;
         const MAX_VERIFICATION_ATTEMPTS: u32 = 10;
@@ -469,10 +455,6 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
 
     // Skip VAD processing here since the pipeline already extracted speech using VAD
     let speech_samples = transcription_data;
-    if super::asrserve_stream::enabled() && matches!(engine, TranscriptionEngine::Provider(_)) {
-        super::asrserve_stream::feed(app,&speech_samples,chunk.chunk_id).await?;
-        return Ok((String::new(),None,false));
-    }
     super::rk_asr_provider::set_chunk_start_ms((chunk.timestamp * 1000.0).round() as i64);
 
     // Check for empty samples - improved error handling

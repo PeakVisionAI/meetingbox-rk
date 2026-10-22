@@ -1159,12 +1159,12 @@ pub async fn get_meeting_audio_path<R: Runtime>(
         .to_ascii_lowercase();
     // RK WebKit cannot reliably decode the audio-only MP4/M4A files produced by
     // the recorder. Keep the source untouched and prepare a small MP3 cache.
-    let needs_transcode = (cfg!(target_os = "windows") && extension != "wav") || matches!(
+    let needs_transcode = matches!(
         extension.as_str(),
         "mp4" | "m4a" | "mkv" | "webm" | "wma" | "flac"
     );
     let playback_extension = if needs_transcode {
-        if cfg!(target_os = "windows") { "wav".to_string() } else { "mp3".to_string() }
+        "mp3".to_string()
     } else {
         extension.clone()
     };
@@ -1218,7 +1218,7 @@ pub async fn get_meeting_audio_path<R: Runtime>(
                         "-map",
                         "0:a:0",
                         "-c:a",
-                        if cfg!(target_os = "windows") { "pcm_s16le" } else { "libmp3lame" },
+                        "libmp3lame",
                         "-b:a",
                         "64k",
                         "-ac",
@@ -1228,7 +1228,7 @@ pub async fn get_meeting_audio_path<R: Runtime>(
                         "-avoid_negative_ts",
                         "make_zero",
                         "-f",
-                        if cfg!(target_os = "windows") { "wav" } else { "mp3" },
+                        "mp3",
                     ])
                     .arg(&temporary)
                     .output()
@@ -1612,13 +1612,4 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
             }
         }
     }
-}
-
-/// Read only the prepared audio belonging to an unlocked meeting.
-#[tauri::command]
-pub async fn read_meeting_audio<R: Runtime>(app: AppHandle<R>, state: tauri::State<'_, AppState>, meeting_id: String) -> Result<tauri::ipc::Response, String> {
-    let path = get_meeting_audio_path(app, state, meeting_id.clone()).await?;
-    let bytes = tokio::fs::read(&path).await.map_err(|e| format!("无法读取会议录音：{e}"))?;
-    log_info!("Meeting playback ready: meeting={}, bytes={}", meeting_id, bytes.len());
-    Ok(tauri::ipc::Response::new(bytes))
 }

@@ -1,6 +1,0 @@
-# Use after all required models have been downloaded and verified.
-services:
-  asr:
-    environment:
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"

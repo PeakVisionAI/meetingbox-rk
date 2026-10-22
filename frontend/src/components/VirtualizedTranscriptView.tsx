@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useReducer, startTransition, useEffect, useState, memo, useMemo } from "react";
+import { useCallback, useRef, useReducer, startTransition, useEffect, useState, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
@@ -49,45 +49,6 @@ function splitSpeakerPrefix(text: string, explicitLabel?: string): { speakerLabe
     return match ? { speakerLabel: match[1], text: match[2] } : { text };
 }
 
-
-// Adapted from Brevia backend/worker_session.py (_coalesce_subtitles, _join_text).
-// ISC License; Copyright (c) 2026 Brevia contributors. See THIRD_PARTY_BREVIA.txt.
-// Display-only grouping keeps original records for seeking/editing and shows the tail immediately.
-function paragraphSeparator(left: string, right: string): string {
-    if (!left || !right || /\s$/.test(left) || /^\s/.test(right)) return '';
-    return /[\x00-\x7F]$/.test(left) && /^[A-Za-z0-9]/.test(right) ? ' ' : '';
-}
-
-function isSilenceMarker(text: string): boolean {
-    return /^\s*(?:[<\[({]?\s*(?:sil|silence|no_speech)\s*[>\])}]?[\s.,，。!?！？;；]*)+$/i.test(text);
-}
-
-function groupTranscriptSegments(source: TranscriptSegmentData[]) {
-    const groups: (TranscriptSegmentData & { parts: TranscriptSegmentData[] })[] = [];
-    for (const item of source) {
-        const parsed = splitSpeakerPrefix(item.text, item.speakerLabel);
-        if (!parsed.text.trim() || isSilenceMarker(parsed.text)) continue;
-        const part = { ...item, ...parsed };
-        const previous = groups[groups.length - 1];
-        const tail = previous?.parts[previous.parts.length - 1];
-        const separator = previous ? paragraphSeparator(previous.text, part.text) : '';
-        const held = previous?.text.length ?? 0;
-        const complete = previous ? /[。！？!?][”’」』）)]*$/.test(previous.text.trim()) : false;
-        const sameSpeaker = parsed.speakerLabel && !/待识别|候选/.test(parsed.speakerLabel) && previous?.speakerLabel === parsed.speakerLabel;
-        // Same-speaker runs form reading paragraphs; silence belongs to ASR endpointing.
-        // Start a new paragraph at a completed sentence after reaching the reading target.
-        const ordered = !tail || part.timestamp >= tail.timestamp;
-        if (previous && sameSpeaker && ordered && !(held >= 200 && complete)) {
-            previous.parts.push(part);
-            previous.text += separator + part.text;
-            previous.endTime = part.endTime;
-        } else {
-            groups.push({ ...part, parts: [part] });
-        }
-    }
-    return groups;
-}
-
 // Helper function to format seconds as recording-relative time [MM:SS]
 function formatRecordingTime(seconds: number | undefined): string {
     if (seconds === undefined) return '[--:--]';
@@ -124,9 +85,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     showConfidence,
     onPlaySegment,
     onEditSegment,
-    parts,
 }: {
-    parts?: TranscriptSegmentData[];
     id: string;
     timestamp: number;
     endTime?: number;
@@ -142,7 +101,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     const displayText = cleanStopWords(parsed.text) || (parsed.text.trim() === '' ? uiText.silence : parsed.text);
 
     return (
-        <div id={`segment-${id}`} className="mb-5 rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3">
+        <div id={`segment-${id}`} className="mb-3">
             <div className="flex items-start gap-2">
                 <Tooltip>
                     <TooltipTrigger>
@@ -156,24 +115,14 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         )}
                     </TooltipContent>
                 </Tooltip>
-                <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                <div className="flex-1">
                     {parsed.speakerLabel && <div className="mb-1 text-xs font-semibold text-blue-700">{parsed.speakerLabel}</div>}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
-                            <p className="text-base text-gray-800 leading-8">{parts && parts.length > 1 ? parts.map((part, index) => (
-                            <span key={part.id} className="group/phrase">
-                                {index > 0 ? paragraphSeparator(parts[index - 1].text, part.text) : ''}{part.text}
-                                {onEditSegment && <button className="ml-1 inline-flex text-gray-300 hover:text-blue-600" title={`校对 ${formatRecordingTime(part.timestamp)} 这一句`} onClick={() => onEditSegment(part)}><Pencil size={12} /></button>}
-                            </span>
-                        )) : displayText}</p>
+                            <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                         </div>
                     ) : (
-                        <p className="text-base text-gray-800 leading-8">{parts && parts.length > 1 ? parts.map((part, index) => (
-                            <span key={part.id} className="group/phrase">
-                                {index > 0 ? paragraphSeparator(parts[index - 1].text, part.text) : ''}{part.text}
-                                {onEditSegment && <button className="ml-1 inline-flex text-gray-300 hover:text-blue-600" title={`校对 ${formatRecordingTime(part.timestamp)} 这一句`} onClick={() => onEditSegment(part)}><Pencil size={12} /></button>}
-                            </span>
-                        )) : displayText}</p>
+                        <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
                     )}
                 </div>
                 {onPlaySegment && (
@@ -187,7 +136,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         <Headphones size={15} />
                     </button>
                 )}
-                {onEditSegment && !isStreaming && (!parts || parts.length <= 1) && (
+                {onEditSegment && !isStreaming && (
                     <button
                         type="button"
                         className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-blue-50 hover:text-blue-600"
@@ -204,7 +153,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
 });
 
 export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps> = ({
-    segments: sourceSegments,
+    segments,
     isRecording = false,
     isPaused = false,
     isProcessing = false,
@@ -220,11 +169,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     onPlaySegment,
     onEditSegment,
 }) => {
-    const [showLiveCaptions, setShowLiveCaptions] = useState(true);
-    const captionSegments = useMemo(() => sourceSegments.map(item => ({
-        ...item, ...splitSpeakerPrefix(item.text, item.speakerLabel),
-    })).filter(item => item.text.trim() && !isSilenceMarker(item.text)).slice(-2), [sourceSegments]);
-    const segments = useMemo(() => groupTranscriptSegments(sourceSegments), [sourceSegments]);
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -236,7 +180,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     // Setup virtualizer for efficient rendering of large lists
     const virtualizer = useVirtualizer({
         count: segments.length,
-        getItemKey: (index) => segments[index].id,
         getScrollElement: () => scrollRef.current,
         estimateSize: () => 96,
         overscan: 10, // Render extra items above/below viewport
@@ -327,22 +270,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     return (
         <div className="flex flex-col h-full min-h-0">
             {isRecording && (
-                <section className="shrink-0 mx-4 mb-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4" aria-label="实时字幕">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                        <span className="text-sm font-semibold text-blue-800">实时字幕 · {isPaused ? '已暂停' : '正在聆听'}</span>
-                        <button type="button" className="text-xs text-blue-700 hover:underline" onClick={() => setShowLiveCaptions(value => !value)} aria-expanded={showLiveCaptions}>
-                            {showLiveCaptions ? '收起字幕' : '展开字幕'}
-                        </button>
-                    </div>
-                    {showLiveCaptions && <div role="log" aria-live="polite" aria-atomic="true" className="max-h-44 overflow-y-auto space-y-2 text-xl leading-relaxed text-slate-900">
-                        {captionSegments.length ? captionSegments.map((segment, index) => <p key={segment.id} className={index < captionSegments.length - 1 ? 'text-slate-500 text-base' : ''}>
-                            {segment.speakerLabel && <span className="mr-2 text-xs font-medium text-blue-700">{segment.speakerLabel}</span>}
-                            {segment.text}
-                        </p>) : <p className="text-base text-slate-500">{isPaused ? '录音已暂停' : '等待语音，识别内容将在这里实时显示…'}</p>}
-                    </div>}
-                </section>
-            )}
-            {isRecording && (
                 <div className="shrink-0 px-4 pt-2 bg-white">
                     <RecordingStatusBar isPaused={isPaused} />
                 </div>
@@ -394,7 +321,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                     key={segment.id}
                                     data-index={virtualRow.index}
                                     ref={virtualizer.measureElement}
-                                    className="flow-root"
                                     style={{
                                         position: "absolute",
                                         top: 0,
@@ -404,7 +330,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                     }}
                                 >
                                     <TranscriptSegment
-                                        parts={segment.parts}
                                         id={segment.id}
                                         timestamp={segment.timestamp}
                                         endTime={segment.endTime}
@@ -465,7 +390,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                     transition={{ duration: 0.15 }}
                                 >
                                     <TranscriptSegment
-                                        parts={segment.parts}
                                         id={segment.id}
                                         timestamp={segment.timestamp}
                                         endTime={segment.endTime}
