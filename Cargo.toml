@@ -25,6 +25,3 @@ panic = "abort"
 strip = "symbols"
 debug = 0
 incremental = false
-
-[patch.crates-io]
-tauri-runtime-wry = { path = "vendor/tauri-runtime-wry-2.11.1" }

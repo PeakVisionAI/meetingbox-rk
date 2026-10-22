@@ -1,5 +1,4 @@
 'use client';
-import { upsertLiveTranscript } from '@/lib/liveTranscript';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode, MutableRefObject } from 'react';
 import { Transcript, TranscriptUpdate } from '@/types';
@@ -296,20 +295,6 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       try {
         console.log('🔥 Setting up MAIN transcript listener during component initialization...');
         unlistenFn = await transcriptService.onTranscriptUpdate((update) => {
-          if (update.source === 'LiveStream') {
-            const next: Transcript = {
-              id: `live-${update.sequence_id}`, text: update.text, timestamp: update.timestamp,
-              sequence_id: update.sequence_id, chunk_start_time: update.chunk_start_time,
-              is_partial: update.is_partial, confidence: update.confidence,
-              audio_start_time: update.audio_start_time, audio_end_time: update.audio_end_time,
-              duration: update.duration,
-            };
-            setTranscripts(prev => upsertLiveTranscript(prev, next, compareTranscripts));
-            if (currentMeetingId) {
-              void indexedDBService.saveTranscript(currentMeetingId, { ...update, id: `live-${currentMeetingId}-${update.sequence_id}` });
-            }
-            return;
-          }
           const now = Date.now();
           console.log('🎯 MAIN LISTENER: Received transcript update:', {
             sequence_id: update.sequence_id,

@@ -6,11 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::State;
-use std::sync::atomic::{AtomicUsize,Ordering};
-static PENDING: AtomicUsize=AtomicUsize::new(0);
-pub fn pending_summaries()->usize {PENDING.load(Ordering::SeqCst)}
-struct PendingSummary;
-impl Drop for PendingSummary {fn drop(&mut self){PENDING.fetch_sub(1,Ordering::SeqCst);}}
 
 const DEFAULT_SUMMARY_SERVICE_URL: &str = "http://127.0.0.1:8050";
 const MAX_MINUTE_TRANSCRIPT_CHARS: usize = 12_000;
@@ -19,8 +14,6 @@ const MAX_MINUTE_TRANSCRIPT_CHARS: usize = 12_000;
 pub struct LiveSummarySegment {
     pub text: String,
     pub speaker: Option<String>,
-    #[serde(default)]
-    pub start_seconds: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,10 +29,6 @@ pub struct MinuteSummaryRecord {
     pub start_seconds: i64,
     pub end_seconds: i64,
     pub summary: String,
-    #[serde(default)]
-    pub structure: Option<Value>,
-    #[serde(default)]
-    pub source_text: Option<String>,
 }
 
 fn service_template(template_id: &str) -> &'static str {
@@ -75,7 +64,6 @@ pub async fn api_generate_minute_summary(
     template_id: String,
     minute_index: i64,
     segments: Vec<LiveSummarySegment>,
-    previous_context: Option<Value>,
 ) -> Result<MinuteSummaryDraft, String> {
     if minute_index < 0 {
         return Err("分时摘要序号无效".to_string());
@@ -93,10 +81,8 @@ pub async fn api_generate_minute_summary(
 
     let base_url = std::env::var("MEETINGBOX_SUMMARY_URL")
         .unwrap_or_else(|_| DEFAULT_SUMMARY_SERVICE_URL.to_string());
-    PENDING.fetch_add(1,Ordering::SeqCst);
-    let _pending=PendingSummary;
     let response = Client::builder()
-        .timeout(Duration::from_secs(240))
+        .timeout(Duration::from_secs(90))
         .build()
         .map_err(|error| format!("无法初始化摘要服务连接: {}", error))?
         .post(format!(
@@ -104,12 +90,10 @@ pub async fn api_generate_minute_summary(
             base_url.trim_end_matches('/')
         ))
         .json(&json!({
-            "meeting_id": crate::audio::transcription::rk_asr_provider::current_meeting_id(),
-            "interval_index": minute_index,
+            "meeting_id": 0,
             "template": service_template(&template_id),
             "segments": segments,
-            "incremental": true,
-            "previous_context": previous_context.unwrap_or_else(|| json!({}))
+            "incremental": true
         }))
         .send()
         .await
@@ -156,9 +140,6 @@ pub async fn api_save_meeting_minute_summaries(
         {
             return Err("分时摘要时间范围无效".to_string());
         }
-        let stored = if summary.structure.is_some() {
-            json!({"version":"adaptive-five-v1","summary":summary.summary,"structure":summary.structure,"source_text":summary.source_text}).to_string()
-        } else { summary.summary };
         sqlx::query(
             "INSERT INTO meeting_minute_summaries (meeting_id, minute_index, start_seconds, end_seconds, summary, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(meeting_id, minute_index) DO UPDATE SET start_seconds = excluded.start_seconds, end_seconds = excluded.end_seconds, summary = excluded.summary, created_at = excluded.created_at",
         )
@@ -166,7 +147,7 @@ pub async fn api_save_meeting_minute_summaries(
         .bind(summary.minute_index)
         .bind(summary.start_seconds)
         .bind(summary.end_seconds)
-        .bind(stored)
+        .bind(summary.summary)
         .bind(Utc::now().to_rfc3339())
         .execute(&mut *transaction)
         .await
@@ -194,14 +175,11 @@ pub async fn api_get_meeting_minute_summaries(
     Ok(rows
         .into_iter()
         .map(
-            |(minute_index, start_seconds, end_seconds, raw)| {
-                let data: Option<Value> = serde_json::from_str(&raw).ok();
-                let envelope = data.as_ref().filter(|v| v["version"] == "adaptive-five-v1");
-                MinuteSummaryRecord { minute_index,start_seconds,end_seconds,
-                    summary:envelope.and_then(|v|v["summary"].as_str()).unwrap_or(&raw).to_string(),
-                    structure:envelope.map(|v|v["structure"].clone()),
-                    source_text:envelope.and_then(|v|v["source_text"].as_str()).map(str::to_string),
-                }
+            |(minute_index, start_seconds, end_seconds, summary)| MinuteSummaryRecord {
+                minute_index,
+                start_seconds,
+                end_seconds,
+                summary,
             },
         )
         .collect())

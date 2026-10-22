@@ -88,10 +88,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         meeting_name
     );
 
-    let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
-    crate::knowledge_center::require_meeting_mode()?;
-    let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -117,7 +114,6 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     }
     info!("✅ Transcription model validation passed");
     refresh_hotwords(&app).await;
-    let _ = app.emit("recording-start-progress", "正在连接会议麦克风");
     let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
     info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
@@ -228,7 +224,6 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     });
 
     // Start recording with resolved devices (replaces start_recording_with_defaults_and_auto_save call)
-    let _ = app.emit("recording-start-progress", "正在初始化录音设备");
     let transcription_receiver = manager
         .start_recording(microphone_device, system_device, auto_save)
         .await
@@ -322,10 +317,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         mic_device_name, system_device_name, meeting_name
     );
 
-    let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
-    crate::knowledge_center::require_meeting_mode()?;
-    let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -351,7 +343,6 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     }
     info!("✅ Transcription model validation passed");
     refresh_hotwords(&app).await;
-    let _ = app.emit("recording-start-progress", "正在连接会议麦克风");
     let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
     info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
@@ -421,7 +412,6 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     });
 
     // Start recording with specified devices and auto_save setting
-    let _ = app.emit("recording-start-progress", "正在初始化录音设备");
     let transcription_receiver = manager
         .start_recording(mic_device, system_device, auto_save)
         .await
@@ -563,6 +553,16 @@ pub async fn stop_recording<R: Runtime>(
         }
     }
 
+    // Step 1.5: Clean up transcript listener to release microphone
+    // Unlisten transcript-update event to prevent lingering references
+    {
+        use tauri::Listener;
+        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
+            app.unlisten(listener_id);
+            info!("✅ Transcript-update listener removed");
+        }
+    }
+
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
     let _ = app.emit(
         "recording-shutdown-progress",
@@ -607,7 +607,7 @@ pub async fn stop_recording<R: Runtime>(
 
         // Wait for remaining chunks, but do not freeze the UI if ASR is stuck.
         match tokio::time::timeout(
-            tokio::time::Duration::from_secs(if super::transcription::asrserve_stream::enabled() { 3600 } else { 45 }),
+            tokio::time::Duration::from_secs(45),
             task_handle
         ).await {
             Ok(Ok(())) => {
@@ -627,15 +627,6 @@ pub async fn stop_recording<R: Runtime>(
         progress_task.abort();
     } else {
         info!("ℹ️ No transcription task found to wait for");
-    }
-
-    // Keep persistence listening until the continuous stream's final utterance
-    // and delayed speaker label have both arrived.
-    {
-        use tauri::Listener;
-        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
-            app.unlisten(listener_id);
-        }
     }
 
     let _ = app.emit(
@@ -759,9 +750,6 @@ pub async fn stop_recording<R: Runtime>(
     };
 
     // Now perform async analytics tracking without holding manager reference
-    // Optional telemetry must not delay durable recording save/navigation.
-    let analytics_app = app.clone();
-    tokio::spawn(async move {
     if let Some((total_duration, active_duration, pause_duration, transcript_segments_count, had_fatal_error, mic_device_name, sys_device_name, chunks_processed)) = analytics_data {
         info!("📊 Collecting analytics for meeting end");
 
@@ -783,8 +771,8 @@ pub async fn stop_recording<R: Runtime>(
 
         // Get transcription model info (already loaded above for model unload)
         let transcription_config = match crate::api::api::api_get_transcript_config(
-            analytics_app.clone(),
-            analytics_app.clone().state(),
+            app.clone(),
+            app.clone().state(),
             None,
         )
         .await
@@ -798,8 +786,8 @@ pub async fn stop_recording<R: Runtime>(
 
         // Get summary model info from API
         let summary_config = match crate::api::api::api_get_model_config(
-            analytics_app.clone(),
-            analytics_app.clone().state(),
+            app.clone(),
+            app.clone().state(),
             None,
         )
             .await
@@ -843,8 +831,6 @@ pub async fn stop_recording<R: Runtime>(
             Err(e) => warn!("⚠️ Failed to track analytics: {}", e),
         }
     }
-
-    });
 
     // Step 4: Finalize recording state and cleanup resources safely
     let _ = app.emit(
@@ -1265,4 +1251,3 @@ pub async fn attempt_device_reconnect(
         }
     }
 }
-

@@ -47,7 +47,7 @@ fn hash_password(password: &str) -> Result<String, String> {
 mod tests {
     use super::{
         hash_admin_password, hash_meeting_password, require_meeting_unlocked, summary_markdown,
-        verify_password, transcript_paragraphs, UNLOCKED_MEETINGS,
+        verify_password, UNLOCKED_MEETINGS,
     };
 
     #[test]
@@ -94,13 +94,6 @@ mod tests {
             .insert(meeting_id.to_string());
         assert!(require_meeting_unlocked(meeting_id).is_ok());
         UNLOCKED_MEETINGS.lock().unwrap().remove(meeting_id);
-    }
-
-
-    #[test]
-    fn transcript_export_merges_chunks_and_preserves_punctuation_and_speakers() {
-        let rows = vec![("00:00".into(), "发言人1：今天讨论，".into()), ("00:07".into(), "发言人1：会议方案。".into()), ("00:08".into(), "发言人2：好的！".into())];
-        assert_eq!(transcript_paragraphs(&rows), "发言人1：\n今天讨论，会议方案。\n\n发言人2：\n好的！");
     }
 
     #[test]
@@ -344,29 +337,6 @@ pub async fn reset_meeting_password(
     set_meeting_password(state, meeting_id, Some(new_password)).await
 }
 
-
-fn transcript_paragraphs(rows: &[(String, String)]) -> String {
-    let prefix = regex::Regex::new(r"^((?:候选发言人|发言人待识别|发言人(?:\s*[^：:\s]{1,20})?))[：:]\s*([\s\S]*)$").expect("speaker pattern");
-    let mut paragraphs: Vec<(String, String)> = Vec::new();
-    for (_, raw) in rows {
-        let (speaker, text) = match prefix.captures(raw) {
-            Some(c) => (c[1].to_string(), c[2].to_string()),
-            None => ("发言人待识别".to_string(), raw.to_string()),
-        };
-        if text.trim().is_empty() { continue; }
-        let merge = paragraphs.last().map(|(previous, body)| {
-            let complete = body.trim_end_matches(['”', '’', '」', '』', '）', ')']).ends_with(['。', '！', '？', '!', '?']);
-            previous == &speaker && !speaker.contains("待识别") && !speaker.contains("候选") && !(body.chars().count() >= 200 && complete)
-        }).unwrap_or(false);
-        if merge {
-            let body = &mut paragraphs.last_mut().unwrap().1;
-            if body.chars().last().map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) && text.chars().next().map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) { body.push(' '); }
-            body.push_str(&text);
-        } else { paragraphs.push((speaker, text)); }
-    }
-    paragraphs.into_iter().map(|(speaker, text)| format!("{}：\n{}", speaker, text)).collect::<Vec<_>>().join("\n\n")
-}
-
 #[tauri::command]
 pub async fn export_meeting_text(
     state: State<'_, AppState>,
@@ -402,15 +372,12 @@ pub async fn export_meeting_text(
     .flatten();
 
     let mut content = format!("# {}\n\n## 完整转写\n\n", meeting.0);
-    let transcript_body = transcript_paragraphs(&transcripts);
-    content.push_str(&transcript_body);
-    content.push_str("\n\n");
-    fs::write(Path::new(&folder_path).join("完整转录稿.txt"), &transcript_body).map_err(|error| error.to_string())?;
+    for (timestamp, transcript) in transcripts {
+        content.push_str(&format!("[{}] {}\n", timestamp, transcript));
+    }
     if let Some(summary) = summary {
         content.push_str("\n## AI 会议总结\n\n");
-        let markdown = summary_markdown(&summary);
-        fs::write(Path::new(&folder_path).join("会议纪要.md"), &markdown).map_err(|error| error.to_string())?;
-        content.push_str(&markdown);
+        content.push_str(&summary_markdown(&summary));
         content.push('\n');
     }
     let output_path = Path::new(&folder_path).join("会议文字成果.md");

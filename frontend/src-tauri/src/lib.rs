@@ -55,9 +55,6 @@ pub mod productivity;
 pub mod state;
 pub mod summary;
 pub mod system_power;
-pub mod local_services;
-pub mod knowledge_center;
-mod runtime_stress;
 pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
@@ -431,7 +428,6 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(format!("许可证校验失败: {error}")))?;
 
             log::info!("Application setup complete");
-            runtime_stress::run(_app.handle());
 
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
@@ -541,9 +537,6 @@ pub fn run() {
             stop_recording,
             is_recording,
             system_power::system_power_action,
-            system_power::close_application,
-            local_services::ensure_local_services,
-            local_services::get_local_summary_status,
             get_transcription_status,
             read_audio_file,
             save_transcript,
@@ -659,10 +652,6 @@ pub fn run() {
             access_control::export_meeting_text,
             access_control::meeting_uses_independent_password,
             api::api_search_transcripts,
-            knowledge_center::knowledge_enter,
-            knowledge_center::knowledge_request,
-            knowledge_center::knowledge_leave,
-            knowledge_center::knowledge_audio,
             productivity::api_search_meetings,
             productivity::api_list_speaker_labels,
             productivity::api_save_speaker_label,
@@ -676,7 +665,6 @@ pub fn run() {
             productivity::api_extract_meeting_actions,
             productivity::api_update_meeting_action,
             productivity::api_update_transcript,
-            productivity::api_suggest_transcript_correction,
             productivity::api_export_meeting_format,
             api::api_get_profile,
             api::api_save_profile,
@@ -693,7 +681,6 @@ pub fn run() {
             api::api_get_meeting,
             api::api_get_meeting_metadata,
             api::get_meeting_audio_path,
-            api::read_meeting_audio,
             api::release_meeting_audio_path,
             api::api_get_meeting_transcripts,
             api::api_save_meeting_title,
@@ -838,4 +825,3 @@ pub fn run() {
             }
         });
 }
-

@@ -1,98 +1,246 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Transcript } from '@/types';
 import { minuteSummaryService, type MinuteSummaryRecord } from '@/services/minuteSummaryService';
-import { SUMMARY_INTERVAL_SECONDS, intervalSegments, sourceText, nextSummaryBoundary, endOf } from '@/lib/incrementalSummary';
-export { SUMMARY_INTERVAL_SECONDS } from '@/lib/incrementalSummary';
-export const LIVE_SUMMARY_ENABLED=true;
-const VERSION='adaptive-five-v1';
-const CACHE='pending_minute_summaries';
-const VERSION_KEY='pending_minute_summaries_version';
-const SESSION_KEY='pending_summary_session_token';
-let queue: Promise<void>=Promise.resolve();
-const snapshots=new Map<string,MinuteSummaryRecord[]>();
-const saveTargets=new Map<string,string>();
-export function attachMinuteSummaryMeeting(meetingId:string) {
-  const token=sessionStorage.getItem(SESSION_KEY);
-  if(token){saveTargets.set(token,meetingId);snapshots.set(token,cachedMinuteSummaries());}
-  return token;
+
+const SUMMARY_GRACE_SECONDS = 5;
+export const SUMMARY_INTERVAL_SECONDS = 8 * 60;
+const SUMMARY_CACHE_VERSION = 'eight-minute-v1';
+const SUMMARY_CACHE_VERSION_KEY = 'pending_minute_summaries_version';
+const SUMMARY_CACHE_KEY = 'pending_minute_summaries';
+
+let summaryGenerationQueue: Promise<void> = Promise.resolve();
+
+function transcriptStart(transcript: Transcript): number {
+  return transcript.audio_start_time ?? transcript.chunk_start_time ?? 0;
 }
-export function cachedMinuteSummaries(): MinuteSummaryRecord[] {
-  if(sessionStorage.getItem(VERSION_KEY)!==VERSION)return [];
-  try { const data=JSON.parse(sessionStorage.getItem(CACHE)||'[]');return Array.isArray(data)?data:[]; } catch {return [];}
+
+function transcriptEnd(transcript: Transcript): number {
+  const start = transcriptStart(transcript);
+  return Math.max(
+    start + 1,
+    transcript.audio_end_time ?? start + (transcript.duration ?? 0),
+  );
 }
-function cache(item: MinuteSummaryRecord) {
-  const next=[...cachedMinuteSummaries().filter(t=>t.minute_index!==item.minute_index),item].sort((a,b)=>a.minute_index-b.minute_index);
-  sessionStorage.setItem(CACHE,JSON.stringify(next));return next;
+
+function splitSpeaker(text: string) {
+  const match = text.match(/^((?:候选发言人|发言人)[^：:\s]{0,20})[：:]\s*([\s\S]*)$/);
+  return { speaker: match?.[1], text: (match?.[2] || text).trim() };
 }
-function serial<T>(task:()=>Promise<T>):Promise<T> {const p=queue.then(task,task);queue=p.then(()=>undefined,()=>undefined);return p;}
-async function record(transcripts:Transcript[],templateId:string,index:number,start:number,end:number,previous:Record<string,unknown>={}):Promise<MinuteSummaryRecord> {
-  const segments=intervalSegments(transcripts,start,end);const source=sourceText(transcripts,start,end);
-  if(!source)return {minute_index:index,start_seconds:start,end_seconds:end,summary:'',status:'empty',source_text:source};
+
+function usesCurrentInterval(summary: MinuteSummaryRecord) {
+  const expectedStart = summary.minute_index * SUMMARY_INTERVAL_SECONDS;
+  const summaryText = summary.summary.trimStart();
+  const containsRawJson = summary.status === 'completed'
+    && summaryText.startsWith('{')
+    && /"(?:topic|agenda|summary)"\s*:/.test(summaryText);
+  return summary.start_seconds === expectedStart
+    && summary.end_seconds === expectedStart + SUMMARY_INTERVAL_SECONDS
+    && !containsRawJson;
+}
+
+function readCachedSummaries(): MinuteSummaryRecord[] {
+  const stored = sessionStorage.getItem(SUMMARY_CACHE_KEY);
+  if (!stored) return [];
   try {
-    const result=await minuteSummaryService.generate(templateId,index,segments,previous);
-    return {minute_index:index,start_seconds:start,end_seconds:end,summary:result.summary,structure:result.structure,source_text:source,status:'completed'};
-  } catch(error) {
-    console.warn('分时摘要暂不可用',error);
-    return {minute_index:index,start_seconds:start,end_seconds:end,summary:'本段摘要暂未生成，原文已保留。',source_text:source,status:'error'};
+    const parsed = JSON.parse(stored) as MinuteSummaryRecord[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
-export function generateMinuteSummaryInterval(transcripts:Transcript[],templateId:string,index:number,endSeconds?:number,startSeconds?:number) {
-  const token=sessionStorage.getItem(SESSION_KEY);
-  const ready=cachedMinuteSummaries();
-  if(token && !snapshots.has(token))snapshots.set(token,ready);
-  const previous=cachedMinuteSummaries().filter(t=>t.status==='completed').at(-1)?.structure||{};
-  return serial(async()=>{
-    const start=startSeconds ?? (index===0?0:cachedMinuteSummaries().find(t=>t.minute_index===index-1)?.end_seconds ?? index*SUMMARY_INTERVAL_SECONDS);
-    const end=endSeconds ?? nextSummaryBoundary(transcripts,start,finalTranscriptEndSeconds(transcripts),true);
-    if(end===null)throw new Error('等待段落结束');
-    const result=await record(transcripts,templateId,index,start,end,previous);
-    if(token){
-      const next=[...(snapshots.get(token)||[]).filter(t=>t.minute_index!==result.minute_index),result].sort((a,b)=>a.minute_index-b.minute_index);
-      snapshots.set(token,next);
-      const meeting=saveTargets.get(token);
-      if(meeting)await minuteSummaryService.save(meeting,next).catch(error=>console.warn('分时摘要稍后重试保存',error));
-    }
-    if(token===sessionStorage.getItem(SESSION_KEY))cache(result);return result;
+
+function cacheSummary(summary: MinuteSummaryRecord) {
+  const next = [
+    ...readCachedSummaries().filter((item) => item.minute_index !== summary.minute_index),
+    summary,
+  ].sort((left, right) => left.minute_index - right.minute_index);
+  sessionStorage.setItem(SUMMARY_CACHE_KEY, JSON.stringify(next));
+  return next;
+}
+
+function serializeSummaryGeneration<T>(task: () => Promise<T>): Promise<T> {
+  const result = summaryGenerationQueue.then(task, task);
+  summaryGenerationQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function segmentsForInterval(transcripts: Transcript[], startSeconds: number, endSeconds: number) {
+  return transcripts
+    .filter((transcript) => {
+      const start = transcriptStart(transcript);
+      return !transcript.is_partial && start >= startSeconds && start < endSeconds;
+    })
+    .map((transcript) => splitSpeaker(transcript.text))
+    .filter((segment) => segment.text.length > 0);
+}
+
+async function generateSummaryRecord(
+  transcripts: Transcript[],
+  templateId: string,
+  minuteIndex: number,
+  endSeconds: number,
+): Promise<MinuteSummaryRecord> {
+  const startSeconds = minuteIndex * SUMMARY_INTERVAL_SECONDS;
+  const segments = segmentsForInterval(transcripts, startSeconds, endSeconds);
+  if (!segments.length) {
+    return {
+      minute_index: minuteIndex,
+      start_seconds: startSeconds,
+      end_seconds: endSeconds,
+      summary: '',
+      status: 'empty',
+    };
+  }
+
+  try {
+    const result = await minuteSummaryService.generate(templateId, minuteIndex, segments);
+    return {
+      minute_index: minuteIndex,
+      start_seconds: startSeconds,
+      end_seconds: endSeconds,
+      summary: result.summary,
+      status: 'completed',
+    };
+  } catch (error) {
+    console.warn(`Summary interval ${minuteIndex} failed:`, error);
+    return {
+      minute_index: minuteIndex,
+      start_seconds: startSeconds,
+      end_seconds: endSeconds,
+      summary: '本时段摘要生成失败，可在会后总结中重新处理。',
+      status: 'error',
+    };
+  }
+}
+
+export function generateMinuteSummaryInterval(
+  transcripts: Transcript[],
+  templateId: string,
+  minuteIndex: number,
+  endSeconds = (minuteIndex + 1) * SUMMARY_INTERVAL_SECONDS,
+) {
+  return serializeSummaryGeneration(async () => {
+    const summary = await generateSummaryRecord(transcripts, templateId, minuteIndex, endSeconds);
+    cacheSummary(summary);
+    return summary;
   });
 }
-export function finalTranscriptEndSeconds(transcripts:Transcript[]) {
-  return Math.ceil(transcripts.filter(t=>!t.is_partial && t.text.trim()).reduce((end,t)=>Math.max(end,endOf(t)),0));
+
+export function finalTranscriptEndSeconds(transcripts: Transcript[]) {
+  return Math.ceil(transcripts
+    .filter((transcript) => !transcript.is_partial && transcript.text.trim().length > 0)
+    .reduce((latest, transcript) => Math.max(latest, transcriptEnd(transcript)), 0));
 }
-export function finalizeMinuteSummaries(transcripts:Transcript[],templateId:string,snapshot=cachedMinuteSummaries(),token:string|null=null) {
-  return serial(async()=>{
-    // Completed intervals are retained. The final report consumes the raw tail.
-    if(!LIVE_SUMMARY_ENABLED)return [];
-    const result:MinuteSummaryRecord[]=[];
-    for(const old of (token ? snapshots.get(token) || snapshot : snapshot)) {
-      const same=old.source_text===sourceText(transcripts,old.start_seconds,old.end_seconds);
-      result.push(old.status==='completed' && same ? old : await record(transcripts,templateId,old.minute_index,old.start_seconds,old.end_seconds,result.at(-1)?.structure||{}));
+
+export function finalizeMinuteSummaries(transcripts: Transcript[], templateId: string) {
+  return serializeSummaryGeneration(async () => {
+    const meetingEndSeconds = finalTranscriptEndSeconds(transcripts);
+    if (meetingEndSeconds <= 0) return readCachedSummaries();
+
+    const intervalCount = Math.ceil(meetingEndSeconds / SUMMARY_INTERVAL_SECONDS);
+    const summaries = readCachedSummaries();
+    const byIndex = new Map(summaries.map((summary) => [summary.minute_index, summary]));
+
+    for (let minuteIndex = 0; minuteIndex < intervalCount; minuteIndex += 1) {
+      const startSeconds = minuteIndex * SUMMARY_INTERVAL_SECONDS;
+      const endSeconds = Math.min(startSeconds + SUMMARY_INTERVAL_SECONDS, meetingEndSeconds);
+      const existing = byIndex.get(minuteIndex);
+      if (
+        existing?.status === 'completed'
+        && existing.start_seconds === startSeconds
+        && existing.end_seconds === endSeconds
+      ) {
+        continue;
+      }
+
+      const summary = await generateSummaryRecord(transcripts, templateId, minuteIndex, endSeconds);
+      byIndex.set(minuteIndex, summary);
+      cacheSummary(summary);
     }
-    if(token){snapshots.delete(token);saveTargets.delete(token);}return result;
+
+    return [...byIndex.values()].sort((left, right) => left.minute_index - right.minute_index);
   });
 }
-export function formatMinuteRange(start:number,end:number) {
-  const f=(s:number)=>`${String(Math.floor(s/60)).padStart(2,'0')}:${String(Math.floor(s%60)).padStart(2,'0')}`;
-  return `${f(start)}–${f(end)}`;
+
+export function formatMinuteRange(startSeconds: number, endSeconds: number) {
+  const format = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  return `${format(startSeconds)}–${format(endSeconds)}`;
 }
-export function useMinuteSummaries({activeDuration,isRecording,transcripts,templateId}:{activeDuration:number|null;isRecording:boolean;transcripts:Transcript[];templateId:string}) {
-  const [summaries,setSummaries]=useState<MinuteSummaryRecord[]>([]);
-  const [generatingMinute,setGeneratingMinute]=useState<number|null>(null);
-  const processing=useRef(false);const cursor=useRef(0);const index=useRef(0);
-  const append=useCallback((item:MinuteSummaryRecord)=>setSummaries(current=>[...current.filter(t=>t.minute_index!==item.minute_index),item].sort((a,b)=>a.minute_index-b.minute_index)),[]);
-  useEffect(()=>{
-    if(!LIVE_SUMMARY_ENABLED || !isRecording){setSummaries([]);return;}
-    if(sessionStorage.getItem(VERSION_KEY)!==VERSION){sessionStorage.removeItem(CACHE);sessionStorage.setItem(VERSION_KEY,VERSION);}
-    if(!sessionStorage.getItem(SESSION_KEY)){sessionStorage.removeItem(CACHE);sessionStorage.setItem(SESSION_KEY,crypto.randomUUID());}
-    const restored=cachedMinuteSummaries();setSummaries(restored);cursor.current=restored.at(-1)?.end_seconds||0;index.current=restored.length;
-  },[isRecording]);
-  useEffect(()=>{
-    if(!LIVE_SUMMARY_ENABLED || !isRecording || processing.current)return;
-    const boundary=nextSummaryBoundary(transcripts,cursor.current,Math.max(0,(activeDuration||0)-5));
-    if(boundary===null)return;
-    processing.current=true;const i=index.current;const start=cursor.current;const token=sessionStorage.getItem(SESSION_KEY);setGeneratingMinute(i);
-    void generateMinuteSummaryInterval(transcripts,templateId,i,boundary,start).then(item=>{
-      if(token===sessionStorage.getItem(SESSION_KEY)){append(item);cursor.current=boundary;index.current=i+1;}
-    }).finally(()=>{processing.current=false;setGeneratingMinute(null);});
-  },[activeDuration,isRecording,transcripts,templateId,append]);
-  return {summaries,generatingMinute};
+
+export function useMinuteSummaries({
+  activeDuration,
+  isRecording,
+  transcripts,
+  templateId,
+}: {
+  activeDuration: number | null;
+  isRecording: boolean;
+  transcripts: Transcript[];
+  templateId: string;
+}) {
+  const [summaries, setSummaries] = useState<MinuteSummaryRecord[]>([]);
+  const [generatingMinute, setGeneratingMinute] = useState<number | null>(null);
+  const nextMinuteRef = useRef(0);
+  const processingRef = useRef(false);
+
+  const appendSummary = useCallback((summary: MinuteSummaryRecord) => {
+    setSummaries((current) => {
+      return [...current.filter((item) => item.minute_index !== summary.minute_index), summary]
+        .sort((left, right) => left.minute_index - right.minute_index);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    if (sessionStorage.getItem(SUMMARY_CACHE_VERSION_KEY) !== SUMMARY_CACHE_VERSION) {
+      sessionStorage.removeItem(SUMMARY_CACHE_KEY);
+      sessionStorage.setItem(SUMMARY_CACHE_VERSION_KEY, SUMMARY_CACHE_VERSION);
+      setSummaries([]);
+      nextMinuteRef.current = 0;
+      return;
+    }
+    const stored = sessionStorage.getItem(SUMMARY_CACHE_KEY);
+    if (!stored) return;
+    try {
+      const restored = JSON.parse(stored) as MinuteSummaryRecord[];
+      if (!restored.every(usesCurrentInterval)) {
+        sessionStorage.removeItem(SUMMARY_CACHE_KEY);
+        setSummaries([]);
+        nextMinuteRef.current = 0;
+        return;
+      }
+      setSummaries(restored);
+      nextMinuteRef.current = restored.length ? Math.max(...restored.map((item) => item.minute_index)) + 1 : 0;
+    } catch {
+      sessionStorage.removeItem(SUMMARY_CACHE_KEY);
+    }
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (!isRecording || processingRef.current) return;
+    const completedIntervals = Math.floor(
+      Math.max(0, (activeDuration || 0) - SUMMARY_GRACE_SECONDS) / SUMMARY_INTERVAL_SECONDS,
+    );
+    if (nextMinuteRef.current >= completedIntervals) return;
+
+    processingRef.current = true;
+    const processPendingMinutes = async () => {
+      while (nextMinuteRef.current < completedIntervals) {
+        const minuteIndex = nextMinuteRef.current;
+        setGeneratingMinute(minuteIndex);
+        try {
+          const summary = await generateMinuteSummaryInterval(transcripts, templateId, minuteIndex);
+          appendSummary(summary);
+        } finally {
+          setGeneratingMinute(null);
+          nextMinuteRef.current += 1;
+        }
+      }
+    };
+    void processPendingMinutes().finally(() => {
+      processingRef.current = false;
+    });
+  }, [activeDuration, appendSummary, isRecording, templateId, transcripts]);
+
+  return { summaries, generatingMinute };
 }

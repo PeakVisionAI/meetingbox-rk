@@ -1,3 +1,0 @@
-Upstream: https://github.com/PeakVisionAI/meetingbox-rk.git
-Commit: b3a3bda
-Dependency gitlink: 160000 d682e150908e10caa4c15883c633d7902d385237 0	backend/whisper.cpp

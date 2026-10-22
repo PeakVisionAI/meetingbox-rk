@@ -71,6 +71,5 @@ export const productivityService = {
   extractMeetingActions: (meetingId: string) => invoke<MeetingAction[]>('api_extract_meeting_actions', { meetingId }),
   updateMeetingAction: (action: MeetingAction) => invoke<void>('api_update_meeting_action', { id: action.id, content: action.content, assignee: action.assignee ?? null, dueDate: action.due_date ?? null, status: action.status }),
   updateTranscript: (transcriptId: string, text: string, speaker?: string | null) => invoke<void>('api_update_transcript', { transcriptId, text, speaker: speaker ?? null }),
-  suggestTranscriptCorrection: (transcriptId: string) => invoke<{ original: string; suggestion: string; status: string }>('api_suggest_transcript_correction', { transcriptId }),
   exportMeeting: (meetingId: string, format: 'md' | 'txt' | 'srt' | 'docx' | 'pdf') => invoke<string>('api_export_meeting_format', { meetingId, format }),
 };

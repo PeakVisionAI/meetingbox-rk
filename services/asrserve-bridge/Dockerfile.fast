@@ -1,4 +1,0 @@
-FROM quantatrisk/asrserve:1.0.5-cpu
-RUN python -m ensurepip && python -m pip install --no-cache-dir sherpa-onnx==1.13.8
-
-

@@ -1,8 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
 import { ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -45,44 +43,6 @@ export default function Home() {
   const { isMeetingActive, setIsMeetingActive, refetchMeetings, meetings } = useSidebar();
   const { openImportDialog } = useImportDialog();
   const [quickMeetingOpen, setQuickMeetingOpen] = useState(false);
-  const [servicePreparing, setServicePreparing] = useState(false);
-  const [startPending, setStartPending] = useState(false);
-  const startPendingRef = useRef(false);
-  const [startStage, setStartStage] = useState('正在检查录音状态');
-  const [startWaitSeconds, setStartWaitSeconds] = useState(0);
-  const [startError, setStartError] = useState('');
-  const [summaryModelStatus, setSummaryModelStatus] = useState('总结模型在后台准备，不影响录音');
-  useEffect(() => {
-    if (!startPending) {setStartWaitSeconds(0); return;}
-    const began = Date.now();
-    const timer = window.setInterval(() => setStartWaitSeconds(Math.floor((Date.now()-began)/1000)),1000);
-    return () => window.clearInterval(timer);
-  }, [startPending]);
-  useEffect(() => {
-    const stage = (event: Event) => setStartStage((event as CustomEvent<string>).detail);
-    window.addEventListener('recording-start-stage', stage);
-    let disposed=false; let stop:(()=>void)|undefined;
-    void listen<string>('recording-start-progress',event=>setStartStage(event.payload)).then(fn=>{if(disposed)fn();else stop=fn;});
-    return ()=>{disposed=true;stop?.();window.removeEventListener('recording-start-stage',stage);};
-  }, []);
-  useEffect(() => {
-    if(!recordingState.isRecording)return;
-    let active=true;
-    const poll=()=>void invoke<{stage:string}>('get_local_summary_status').then(value=>{if(active)setSummaryModelStatus(value.stage);}).catch(()=>{});
-    poll();const timer=window.setInterval(poll,5000);
-    return ()=>{active=false;window.clearInterval(timer);};
-  },[recordingState.isRecording]);
-  const [serviceProgress, setServiceProgress] = useState({stage:'检查本地模型服务',completed:0,total:3,ready:false,error:false});
-  useEffect(() => {
-    const start = () => { setServicePreparing(true); setServiceProgress({stage:'检查本地模型服务',completed:0,total:3,ready:false,error:false}); };
-    const end = () => setServicePreparing(false);
-    window.addEventListener('local-services-check-start', start);
-    window.addEventListener('local-services-check-end', end);
-    let disposed = false; let stop: (() => void) | undefined;
-    void listen<typeof serviceProgress>('local-services-progress', event => setServiceProgress(event.payload)).then(fn => { if(disposed) fn(); else stop=fn; });
-    return () => { disposed=true; stop?.(); window.removeEventListener('local-services-check-start', start); window.removeEventListener('local-services-check-end', end); };
-  }, []);
-
   const [isRecordingState, setIsRecordingState] = useState(false);
   const [quickMeetingName, setQuickMeetingName] = useState('日常会议');
   const [quickMeetingTemplate, setQuickMeetingTemplate] = useState('standard_meeting');
@@ -95,14 +55,6 @@ export default function Home() {
 
   const { handleRecordingStart } = useRecordingStart(isRecordingState, setIsRecordingState, undefined);
   const { handleRecordingStop, isStopping, setIsStopping } = useRecordingStop(setIsRecordingState, () => {});
-  const [shutdownSeconds, setShutdownSeconds] = useState(0);
-  useEffect(() => {
-    if (!isStopping) { setShutdownSeconds(0); return; }
-    const started = Date.now();
-    const timer = window.setInterval(() => setShutdownSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => window.clearInterval(timer);
-  }, [isStopping]);
-
   const { isRecordingDisabled } = useRecordingStateSync(isRecordingState, setIsRecordingState, setIsMeetingActive);
   const { recoverableMeetings, checkForRecoverableTranscripts, recoverMeeting, loadMeetingTranscripts, deleteRecoverableMeeting } = useTranscriptRecovery();
   const { availableTemplates: meetingTemplates } = useTemplates();
@@ -155,9 +107,6 @@ export default function Home() {
   };
 
   const startMeeting = async (name?: string) => {
-    if(startPendingRef.current)return;
-    startPendingRef.current=true;
-    setStartPending(true);setStartStage('正在检查录音状态');setStartError('');
     try {
       setMeetingStartedAt(Date.now());
       sessionStorage.setItem('pending_summary_template_id', quickMeetingTemplate);
@@ -167,10 +116,7 @@ export default function Home() {
       setIsMeetingActive(true);
       toast.success('会议已开始', { description: '会议结束并保存后设置 6 位访问密码' });
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : String(error));
       toast.error('无法开始会议', { description: error instanceof Error ? error.message : '请检查会议麦克风和本地模型服务' });
-    } finally {
-      startPendingRef.current=false;setStartPending(false);
     }
   };
 
@@ -246,7 +192,7 @@ export default function Home() {
             <div className="hyos-panel-head"><h2>最近会议</h2><button onClick={() => router.push('/files')}>查看全部 <ChevronRight size={15} /></button></div>
             {meetings.length === 0 ? <div className="hyos-empty-files">暂无会议文件</div> : meetings.slice(0, 3).map((meeting) => <button key={meeting.id} className="hyos-record-row" onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}><span className="hyos-record-icon"><img src="/hyos-document-mark.png" alt="" /></span><span className="hyos-record-copy"><span className="hyos-record-title"><b>{meeting.title}</b><em>{formatMeetingDuration(meeting.duration_seconds)}</em></span><small>{formatMeetingDate(meeting.created_at)}</small></span></button>)}
           </section>
-          <div className="hyos-device-strip"><div><b>设备状态</b><span><i />本地运行</span></div><div><b>本地模型服务</b><strong>{servicePreparing ? '正在启动' : serviceProgress.ready ? '已就绪' : '开始前自动检查'}</strong></div><div><b>会议麦克风</b><strong>{selectedDevices.micDevice || '系统默认'}</strong></div></div>
+          <div className="hyos-device-strip"><div><b>设备状态</b><span><i />本地运行</span></div><div><b>本地模型服务</b><strong>已配置</strong></div><div><b>会议麦克风</b><strong>{selectedDevices.micDevice || '系统默认'}</strong></div></div>
         </>
       )}
 
@@ -256,36 +202,33 @@ export default function Home() {
             <div className="hyos-live-title-row">
               <span className="hyos-live-meeting-mark"><img src="/hyos-document-mark.png" alt="" /></span>
               <h1>{meetingTitle || '日常会议'}</h1>
-              <span className="hyos-live-record"><i />{isStopping || recordingState.isProcessing || recordingState.isSaving ? '正在保存' : '录音中'} {!isStopping && !recordingState.isProcessing && !recordingState.isSaving && formatClock(recordingState.activeDuration)}</span>
+              <span className="hyos-live-record"><i />{recordingState.status === RecordingStatus.PROCESSING_TRANSCRIPTS ? '处理中' : '录音中'} {formatClock(recordingState.activeDuration)}</span>
               <button className="hyos-live-end-button" onClick={stopMeetingFromHeader} disabled={!recordingState.isRecording || isStopping}>结束会议</button>
             </div>
             <div className="hyos-live-meta"><span>{liveStartLabel}–{formatClock(recordingState.activeDuration)}</span><span>总结模板:<b>{selectedTemplateName}</b></span><span>内容分段:<b>{transcripts.length}段</b></span></div>
           </div>
-          {(isStopping || recordingState.isProcessing || recordingState.isSaving) && (
-            <div role="status" className="mx-4 mb-4 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-blue-900">
-              <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600" />
-              <div><strong>{recordingState.isSaving ? '正在保存会议文件' : '录音已结束，正在处理最后的语音'}</strong><p className="mt-1 text-sm">已等待 {shutdownSeconds} 秒，逐字稿会继续补齐。完成后自动打开会议文件。</p></div>
-            </div>
-          )}
           <div className="hyos-live-grid">
             <div className="hyos-transcript-pane">
               <div className="hyos-pane-title"><div className="hyos-pane-title-main"><span>逐字稿</span><em className="hyos-transcript-mode">精选发言人</em></div><em>{transcripts.length}段</em></div>
               <div className="hyos-transcript-virtual">
-                <VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isPaused={recordingState.isPaused} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} />
+                {liveSegments.length === 0 ? (
+                  <div className="hyos-live-empty-transcript"><i /><strong>等待语音转写</strong><span>开始发言后，逐字稿会显示在这里</span></div>
+                ) : (
+                  <VirtualizedTranscriptView segments={liveSegments} isRecording={recordingState.isRecording} isProcessing={recordingState.isProcessing} isStopping={recordingState.isStopping} enableStreaming={false} showConfidence={false} />
+                )}
               </div>
             </div>
             <aside className="hyos-summary-pane" aria-label="会议分时摘要">
               <div className="hyos-summary-heading">
                 <h2>会议分时摘要</h2>
-                <span>约五分钟 · 完整段落后归纳</span>
+                <span>每8分钟更新</span>
               </div>
-              <p role="status" className="px-4 pb-2 text-xs text-slate-500">{summaryModelStatus}</p>
               <div ref={minuteSummaryScrollRef} className="hyos-minute-summary-list">
-                {minuteSummaries.length === 0 && generatingMinute === null && (
+                {minuteSummaries.length === 0 && !generatingMinute && (
                   <div className="hyos-summary-empty-state">
                     <div className="hyos-summary-empty-icon">✦</div>
-                    <strong>等待首段摘要</strong>
-                    <p>约五分钟后的首个完整段落结束时生成短摘要，最终纪要将复用并核查原文。</p>
+                    <strong>摘要生成中</strong>
+                    <p>根据每个时间段的转写内容生成重点、决定和待办。</p>
                   </div>
                 )}
                 {minuteSummaries.map((summary, index) => (
@@ -295,7 +238,6 @@ export default function Home() {
                       <span>{summary.status === 'error' ? '生成失败' : summary.status === 'empty' ? '暂无内容' : '已生成'}</span>
                     </div>
                     <p>{summary.summary || '本时段暂未检测到有效发言。'}</p>
-                    {Array.isArray(summary.structure?.todos) && summary.structure.todos.length > 0 && <small>已保留 {summary.structure.todos.length} 项待办，供最终纪要归纳</small>}
                   </article>
                 ))}
                 {generatingMinute !== null && (
@@ -308,8 +250,7 @@ export default function Home() {
         </section>
       )}
 
-      {(startPending || servicePreparing) && !recordingState.isRecording && <div className="hyos-modal-backdrop" style={{zIndex:100}}><div className="hyos-modal" role="dialog" aria-modal="true" aria-label="准备开始会议"><h2>正在准备会议</h2><p role="status" aria-live="polite">{servicePreparing ? serviceProgress.stage : startStage}</p>{servicePreparing ? <progress aria-label="语音服务就绪进度" max={serviceProgress.total} value={serviceProgress.completed} style={{width:'100%',height:12,accentColor:'#2563eb'}} /> : <progress aria-label="正在准备录音" style={{width:'100%',height:12,accentColor:'#2563eb'}} />}<p>已等待 {startWaitSeconds} 秒{servicePreparing ? ` · 语音服务 ${serviceProgress.completed}/${serviceProgress.total} 就绪` : ''}</p><div className="hyos-form-tip">准备完成后自动开始录音，无需重复点击。总结模型在后台单独准备。</div></div></div>}
-      {quickMeetingOpen && !startPending && !servicePreparing && <div className="hyos-modal-backdrop" role="presentation"><div className="hyos-modal" role="dialog" aria-modal="true" aria-labelledby="quick-meeting-title"><button className="hyos-modal-close" onClick={() => setQuickMeetingOpen(false)} aria-label="关闭">×</button><h2 id="quick-meeting-title">快速会议</h2><p>填写会议信息并选择总结模板后开始记录。</p><label>会议名称<input value={quickMeetingName} onChange={(event) => setQuickMeetingName(event.target.value)} /></label><label>总结模板<select value={quickMeetingTemplate} onChange={(event) => setQuickMeetingTemplate(event.target.value)}>{meetingTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label><div className="hyos-form-tip">会议密码将在会议结束并保存成功后设置。</div>{startError && <p role="alert" className="mt-2 text-sm text-red-600">{startError}</p>}<div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => setQuickMeetingOpen(false)}>取消</button><button className="hyos-primary" onClick={() => startMeeting(quickMeetingName)} disabled={!quickMeetingName.trim() || servicePreparing || startPending}>开始会议</button></div></div></div>}
+      {quickMeetingOpen && <div className="hyos-modal-backdrop" role="presentation"><div className="hyos-modal" role="dialog" aria-modal="true" aria-labelledby="quick-meeting-title"><button className="hyos-modal-close" onClick={() => setQuickMeetingOpen(false)} aria-label="关闭">×</button><h2 id="quick-meeting-title">快速会议</h2><p>填写会议信息并选择总结模板后开始记录。</p><label>会议名称<input value={quickMeetingName} onChange={(event) => setQuickMeetingName(event.target.value)} /></label><label>总结模板<select value={quickMeetingTemplate} onChange={(event) => setQuickMeetingTemplate(event.target.value)}>{meetingTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label><div className="hyos-form-tip">会议密码将在会议结束并保存成功后设置。</div><div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => setQuickMeetingOpen(false)}>取消</button><button className="hyos-primary" onClick={() => startMeeting(quickMeetingName)} disabled={!quickMeetingName.trim()}>开始会议</button></div></div></div>}
       {stopConfirmOpen && <div className="hyos-modal-backdrop" role="presentation"><div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="stop-meeting-title"><h2 id="stop-meeting-title">确认结束会议？</h2><p>系统将保存录音、逐字稿和分时摘要，随后设置本次会议密码。</p><div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => resolveStopConfirmation(false)}>继续会议</button><button className="hyos-danger" onClick={() => resolveStopConfirmation(true)}>结束并保存</button></div></div></div>}
       <TranscriptRecovery isOpen={showRecoveryDialog} onClose={() => setShowRecoveryDialog(false)} recoverableMeetings={recoverableMeetings} onRecover={handleRecovery} onDelete={deleteRecoverableMeeting} onLoadPreview={loadMeetingTranscripts} />
     </div>

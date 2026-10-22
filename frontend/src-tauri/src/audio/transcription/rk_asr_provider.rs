@@ -31,7 +31,7 @@ pub fn set_hotwords(hotwords: Vec<(String, Option<String>)>) {
     }
 }
 
-pub(super) fn configured_hotwords_json() -> String {
+fn configured_hotwords_json() -> String {
     HOTWORDS
         .read()
         .ok()
@@ -47,7 +47,7 @@ pub(super) fn configured_hotwords_json() -> String {
         .unwrap_or_else(|| "[]".to_string())
 }
 
-pub(super) fn apply_hotword_corrections(mut text: String) -> String {
+fn apply_hotword_corrections(mut text: String) -> String {
     if let Ok(configured) = HOTWORDS.read() {
         for (phrase, replacement) in configured.iter() {
             if let Some(replacement) = replacement.as_deref().filter(|value| !value.is_empty()) {
@@ -97,7 +97,6 @@ pub struct SpeakerCalibrationResult {
     pub finalized: bool,
     pub segments: Vec<FinalizedAsrSegment>,
     pub error: Option<String>,
-    pub transcription_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,8 +113,6 @@ struct FinalizeResponse {
     segments: Vec<FinalizedAsrSegment>,
     #[serde(default)]
     error: Option<String>,
-    #[serde(default)]
-    transcription_mode: Option<String>,
 }
 
 pub struct RkAsrProvider {
@@ -138,8 +135,7 @@ impl RkAsrProvider {
     }
 
     pub fn local() -> Result<Self, TranscriptionError> {
-        Self::new(std::env::var("MEETINGBOX_ASR_URL")
-            .unwrap_or_else(|_| RK_ASR_ENDPOINT.to_string()))
+        Self::new(RK_ASR_ENDPOINT)
     }
 
     pub async fn finalize_current_meeting(
@@ -149,15 +145,6 @@ impl RkAsrProvider {
         CURRENT_CHUNK_START_MS.store(0, Ordering::SeqCst);
         if meeting_id <= 0 {
             return Ok(SpeakerCalibrationResult::default());
-        }
-
-        // Continuous stream end has already drained and persisted speaker-labelled
-        // utterances. Save immediately; whole-audio reprocessing remains explicit.
-        if super::asrserve_stream::enabled() {
-            return Ok(SpeakerCalibrationResult {
-                transcription_mode: Some("live-stream".to_string()),
-                ..SpeakerCalibrationResult::default()
-            });
         }
 
         let response = self
@@ -184,11 +171,7 @@ impl RkAsrProvider {
             meeting_id, job_id
         );
         let started = std::time::Instant::now();
-        let timeout = std::env::var("MEETINGBOX_FINALIZE_TIMEOUT_SECONDS")
-            .ok().and_then(|value| value.parse::<u64>().ok())
-            .filter(|value| (60..=14400).contains(value))
-            .map(Duration::from_secs).unwrap_or(FINALIZE_TIMEOUT);
-        while started.elapsed() < timeout {
+        while started.elapsed() < FINALIZE_TIMEOUT {
             tokio::time::sleep(FINALIZE_POLL_INTERVAL).await;
             let response = self
                 .client
@@ -219,7 +202,7 @@ impl RkAsrProvider {
 
         Err(TranscriptionError::EngineFailed(format!(
             "RK ASR speaker calibration timed out after {} seconds",
-            timeout.as_secs()
+            FINALIZE_TIMEOUT.as_secs()
         )))
     }
 
@@ -339,8 +322,7 @@ impl TranscriptionProvider for RkAsrProvider {
     }
 
     async fn get_current_model(&self) -> Option<String> {
-        self.is_model_loaded().await.then(|| std::env::var("MEETINGBOX_ASR_MODEL")
-            .unwrap_or_else(|_| RK_ASR_MODEL.to_string()))
+        self.is_model_loaded().await.then(|| RK_ASR_MODEL.to_string())
     }
 
     fn provider_name(&self) -> &'static str {
@@ -442,7 +424,6 @@ fn calibration_result(payload: FinalizeResponse) -> SpeakerCalibrationResult {
         finalized: payload.finalized || payload.status.as_deref() == Some("completed"),
         segments: payload.segments,
         error: payload.error,
-        transcription_mode: payload.transcription_mode,
     }
 }
 
