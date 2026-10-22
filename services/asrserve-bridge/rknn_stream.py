@@ -14,8 +14,12 @@ is shared with the Intel profile, which is the point: only the model differs.
 Endpoints (all overridable by environment):
 
     MEETINGBOX_RK_ASR_URL   default http://127.0.0.1:8020
-    MEETINGBOX_RK_WINDOW_MS default 8000   re-decode window for partials
-    MEETINGBOX_RK_STRIDE_MS default 600    minimum cadence between partial decodes
+    MEETINGBOX_RK_WINDOW_MS default 4000   re-decode window for partials
+    MEETINGBOX_RK_STRIDE_MS default 2000   minimum cadence between partial decodes
+
+Defaults measured on the RK3588 device: a 4 s window every 2 s keeps the pipeline
+at 0.71x realtime while still refreshing captions every ~2 s. Larger windows or a
+tighter cadence push it to 0.9x and leave no headroom (see deploy/rk/README.md).
     MEETINGBOX_RK_SILENCE_MS default 700   trailing silence that closes an utterance
     MEETINGBOX_RK_MAX_UTTERANCE_MS default 20000  hard cut (model limit is 30 s)
 """
@@ -110,8 +114,8 @@ class RknnStream:
         self.cluster = OnlineSpeakerCluster()
         self.punctuator = Punctuator()
 
-        self.window_ms = _env_int("MEETINGBOX_RK_WINDOW_MS", 8000)
-        self.stride_ms = _env_int("MEETINGBOX_RK_STRIDE_MS", 600)
+        self.window_ms = _env_int("MEETINGBOX_RK_WINDOW_MS", 4000)
+        self.stride_ms = _env_int("MEETINGBOX_RK_STRIDE_MS", 2000)
         self.silence_ms = _env_int("MEETINGBOX_RK_SILENCE_MS", 700)
         self.max_utterance_ms = _env_int("MEETINGBOX_RK_MAX_UTTERANCE_MS", 20000)
 

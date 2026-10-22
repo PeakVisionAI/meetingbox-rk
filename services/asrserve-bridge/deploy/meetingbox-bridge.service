@@ -15,8 +15,8 @@ WorkingDirectory=/opt/meetingbox-rk/services/asrserve-bridge
 Environment=MEETINGBOX_PRIMARY_ASR=rknn
 Environment=MEETINGBOX_RK_ASR_URL=http://127.0.0.1:8020
 Environment=MEETINGBOX_BRIDGE_DATA=/var/lib/meetingbox/meeting-data
-Environment=MEETINGBOX_RK_WINDOW_MS=8000
-Environment=MEETINGBOX_RK_STRIDE_MS=600
+Environment=MEETINGBOX_RK_WINDOW_MS=4000
+Environment=MEETINGBOX_RK_STRIDE_MS=2000
 Environment=MEETINGBOX_RK_SILENCE_MS=700
 Environment=MEETINGBOX_RK_MAX_UTTERANCE_MS=20000
 Environment=PYTHONUNBUFFERED=1
