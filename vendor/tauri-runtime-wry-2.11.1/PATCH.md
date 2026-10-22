@@ -1,0 +1,1 @@
+Pinned official 2.11.1. Context derives Clone and is shared across threads, while its main_thread window_target includes a non-atomic Rc<EventLoopRunner>. Store the main_thread context behind Arc, so off-thread Context clones and drops change only the Arc count. Actual UI access remains guarded by the original main_thread_id check. This preserves debug UB checks.

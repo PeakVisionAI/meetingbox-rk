@@ -489,7 +489,10 @@ pub async fn generate_meeting_summary(
             provider,
             LLMProvider::Ollama | LLMProvider::BuiltInAI | LLMProvider::CustomOpenAI
         );
-        if !context_limited || total_tokens < token_threshold {
+        if !context_limited
+            || total_tokens < token_threshold
+            || (text.contains("<incremental_summary>") && total_tokens < 7000)
+        {
             info!(
                 "Using single-pass summarization (tokens: {}, threshold: {})",
                 total_tokens, token_threshold

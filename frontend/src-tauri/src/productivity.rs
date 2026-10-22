@@ -646,6 +646,28 @@ pub async fn api_update_meeting_action(
 }
 
 #[tauri::command]
+pub async fn api_suggest_transcript_correction(
+    state: tauri::State<'_, AppState>,
+    transcript_id: String,
+) -> Result<serde_json::Value, String> {
+    let row: (String, String) = sqlx::query_as(
+        "SELECT meeting_id, transcript FROM transcripts WHERE id = ?",
+    ).bind(&transcript_id).fetch_optional(state.db_manager.pool()).await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "转写段落不存在".to_string())?;
+    crate::access_control::require_meeting_unlocked(&row.0)?;
+    let endpoint = crate::platform::current().asr_endpoint.clone();
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300)).build()
+        .map_err(|error| error.to_string())?
+        .post(format!("{}/v1/asr/correct-text", endpoint.trim_end_matches('/')))
+        .json(&serde_json::json!({"text": row.1}))
+        .send().await.map_err(|_| "本地校对服务不可用，原文已保留".to_string())?
+        .error_for_status().map_err(|_| "校对建议未通过验证，原文已保留".to_string())?;
+    response.json().await.map_err(|_| "校对服务响应无效".to_string())
+}
+
+#[tauri::command]
 pub async fn api_update_transcript(
     state: tauri::State<'_, AppState>,
     transcript_id: String,
@@ -671,6 +693,10 @@ pub async fn api_update_transcript(
         .begin()
         .await
         .map_err(|error| error.to_string())?;
+    sqlx::query("INSERT INTO transcript_correction_history (id, transcript_id, meeting_id, original_text, corrected_text, original_speaker, corrected_speaker, created_at) SELECT ?, id, meeting_id, transcript, ?, speaker, ?, ? FROM transcripts WHERE id = ?")
+        .bind(Uuid::new_v4().to_string())
+        .bind(&text).bind(&speaker).bind(now()).bind(&transcript_id)
+        .execute(&mut *tx).await.map_err(|error| error.to_string())?;
     sqlx::query("UPDATE transcripts SET transcript = ?, speaker = ? WHERE id = ?")
         .bind(text)
         .bind(speaker)

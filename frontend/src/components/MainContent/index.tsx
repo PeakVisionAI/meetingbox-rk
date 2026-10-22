@@ -3,7 +3,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePathname, useRouter } from 'next/navigation';
-import { Settings, Play, Power, RotateCcw } from 'lucide-react';
+import { Settings, Play, Power, RotateCcw, BookOpen, LogOut } from 'lucide-react';
+import { usePlatformProfile } from '@/hooks/usePlatformProfile';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
@@ -22,6 +23,11 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   const recordingState = useRecordingState();
   const isHome = pathname === '/';
   const isSettings = pathname === '/settings';
+  const isKnowledge = pathname === '/knowledge';
+  const profile = usePlatformProfile();
+  const isKnowledgeRef = useRef(isKnowledge);
+  isKnowledgeRef.current = isKnowledge;
+  const [closingApp, setClosingApp] = useState(false);
   const recordingActive = recordingState.isRecording || recordingState.isStopping || recordingState.isProcessing || recordingState.isSaving;
   const recordingActiveRef = useRef(recordingActive);
   const [powerMenuOpen, setPowerMenuOpen] = useState(false);
@@ -36,6 +42,16 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
       return;
     }
     router.push('/settings');
+  };
+
+  const closeApp = async () => {
+    setClosingApp(true);
+    try {
+      await invoke('close_application');
+    } catch (error) {
+      toast.error('无法关闭应用', { description: String(error) });
+      setClosingApp(false);
+    }
   };
 
   const runPowerAction = async (action: PowerAction) => {
@@ -66,6 +82,7 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
     const setup = async () => {
       try {
         const stop = await listen('request-start-recording', () => {
+          if (isKnowledgeRef.current) { toast.info('请先退出企业知识服务中心，再开始会议'); return; }
           if (recordingActiveRef.current) {
             sessionStorage.removeItem('autoStartRecording');
             if (!isHomeRef.current) router.push('/');
@@ -97,7 +114,7 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
   }, [router]);
 
   return (
-    <main className={`hyos-main${isHome && !recordingActive ? ' hyos-home-main' : ''}${isSettings || (isHome && recordingActive) ? ' hyos-chrome-less' : ''}${isHome && recordingActive ? ' hyos-live-main' : ''}`}>
+    <main className={`hyos-main${isKnowledge ? ' hyos-knowledge-main' : ''}${isHome && !recordingActive ? ' hyos-home-main' : ''}${isSettings || (isHome && recordingActive) ? ' hyos-chrome-less' : ''}${isHome && recordingActive ? ' hyos-live-main' : ''}`}>
       {!isSettings && !(isHome && recordingActive) && <header className="hyos-topbar">
         <button className="hyos-brand" onClick={() => router.push('/')} aria-label="返回工作台">
           <span>AI智能会议助手</span>
@@ -110,13 +127,17 @@ const MainContent: React.FC<MainContentProps> = ({ children }) => {
               </button>
             </div>
           )}
+          {profile.knowledgeCenter && !recordingActive && (
+            <button className={`hyos-settings-button${isKnowledge ? ' active' : ''}`} onClick={() => router.push('/knowledge')} title="企业知识服务中心"><BookOpen size={16} />知识中心</button>
+          )}
           <button className={`hyos-settings-button${isSettings ? ' active' : ''}`} onClick={openSettings} disabled={recordingActive} title={recordingActive ? '会议进行中，请先结束会议' : '设置'}><Settings size={16} />设置</button>
-          {isHome && !recordingActive && <button className="hyos-power-button" onClick={() => setPowerMenuOpen(true)}><Power size={16} />关机</button>}
+          {profile.powerActions && isHome && !recordingActive && <button className="hyos-power-button" onClick={() => setPowerMenuOpen(true)}><Power size={16} />关机</button>}
+          {!profile.powerActions && <button className="hyos-power-button" onClick={() => void closeApp()} disabled={closingApp || recordingActive} title={recordingActive ? '会议进行中，请先结束会议' : '退出应用'}><LogOut size={16} />{closingApp ? '正在退出' : '退出'}</button>}
           {(!isHome || recordingActive) && <div className="hyos-user"><span className={isMeetingActive ? 'recording-dot' : 'status-dot'} />{isMeetingActive ? '会议进行中' : '已登录'}</div>}
         </div>
       </header>}
       <div className="hyos-content">{children}</div>
-      {powerMenuOpen && (
+      {powerMenuOpen && profile.powerActions && (
         <div className="hyos-modal-backdrop hyos-power-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !pendingPowerAction && setPowerMenuOpen(false)}>
           <section className="hyos-power-dialog" role="dialog" aria-modal="true" aria-labelledby="power-dialog-title" aria-describedby="power-dialog-description">
             <header><h2 id="power-dialog-title">电源选项</h2><p id="power-dialog-description">选择要执行的操作</p></header>

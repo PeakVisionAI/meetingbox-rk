@@ -1,0 +1,7 @@
+{
+  "build": { "beforeBuildCommand": "" },
+  "bundle": {
+    "externalBin": ["binaries/ffmpeg"],
+    "windows": { "signCommand": null }
+  }
+}

@@ -67,6 +67,23 @@ pub struct TranscriptUpdate {
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
 }
 
+/// Emit a transcript segment produced by a streaming ASR service.
+///
+/// Used by `asrserve_stream` (Intel profile) where partial hypotheses arrive out of
+/// band and must be merged by sequence id instead of appended as new chunks.
+pub fn emit_continuous_segment<R: Runtime>(app: &AppHandle<R>, mut update: TranscriptUpdate) {
+    if update.sequence_id == 0 {
+        update.sequence_id = SEQUENCE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    }
+    if !SPEECH_DETECTED_EMITTED.swap(true, Ordering::SeqCst) {
+        let _ = app.emit(
+            "speech-detected",
+            serde_json::json!({"message": "Speech activity detected"}),
+        );
+    }
+    let _ = app.emit("transcript-update", update);
+}
+
 // NOTE: get_transcript_history and get_recording_meeting_name functions
 // have been moved to recording_commands.rs where they have access to RECORDING_MANAGER
 
@@ -412,6 +429,20 @@ pub fn start_transcription_task<R: Runtime>(
             }
         }
 
+        // Finish the streaming ASR session (Intel profile) so the bridge flushes its tail
+        // segments before we declare the meeting transcript complete.
+        if super::asrserve_stream::enabled() && !dispatcher_cancellation.is_cancelled() {
+            if let Err(error) = super::asrserve_stream::end(&app).await {
+                let _ = app.emit(
+                    "transcription-error",
+                    serde_json::json!({
+                        "userMessage": "实时转写收尾失败，原始录音仍保留。",
+                        "error": error
+                    }),
+                );
+            }
+        }
+
         if dispatcher_cancellation.is_cancelled() {
             warn!("Transcription cancelled during shutdown; remaining audio can be retranscribed");
             return;
@@ -479,6 +510,14 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
 
     // Skip VAD processing here since the pipeline already extracted speech using VAD
     let speech_samples = transcription_data;
+
+    // Streaming ASR (Intel profile): the bridge keeps its own decoder state, so we forward
+    // the window and let it emit segments instead of transcribing each chunk here.
+    if super::asrserve_stream::enabled() && matches!(engine, TranscriptionEngine::Provider(_)) {
+        super::asrserve_stream::feed(app, &speech_samples, chunk.chunk_id).await?;
+        return Ok((String::new(), None, false));
+    }
+
     super::rk_asr_provider::set_chunk_start_ms((chunk.timestamp * 1000.0).round() as i64);
 
     // Check for empty samples - improved error handling

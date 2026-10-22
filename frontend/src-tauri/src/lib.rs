@@ -58,6 +58,10 @@ pub mod system_power;
 pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
+pub mod platform;
+pub mod knowledge_center;
+pub mod local_services;
+mod runtime_stress;
 
 use audio::{list_audio_devices, AudioDevice, trigger_audio_permission};
 use log::{error as log_error, info as log_info};
@@ -429,6 +433,9 @@ pub fn run() {
 
             log::info!("Application setup complete");
 
+            // Opt-in runtime diagnostics (debug builds only, MEETINGBOX_RUNTIME_CLONE_TEST=1)
+            runtime_stress::run(_app.handle());
+
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);
@@ -537,6 +544,14 @@ pub fn run() {
             stop_recording,
             is_recording,
             system_power::system_power_action,
+            system_power::close_application,
+            platform::get_platform_profile,
+            local_services::ensure_local_services,
+            local_services::get_local_summary_status,
+            knowledge_center::knowledge_enter,
+            knowledge_center::knowledge_request,
+            knowledge_center::knowledge_leave,
+            knowledge_center::knowledge_audio,
             get_transcription_status,
             read_audio_file,
             save_transcript,
@@ -666,6 +681,7 @@ pub fn run() {
             productivity::api_extract_meeting_actions,
             productivity::api_update_meeting_action,
             productivity::api_update_transcript,
+            productivity::api_suggest_transcript_correction,
             productivity::api_export_meeting_format,
             api::api_get_profile,
             api::api_save_profile,

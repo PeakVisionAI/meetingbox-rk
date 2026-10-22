@@ -2,6 +2,28 @@
 
 峰瞰密会智盒（MeetingBox RK）是面向会议室设备的桌面会议助手。它在本地完成录音、实时转写、说话人处理、会议文件管理和会议纪要生成，适合部署在 Ubuntu 与 Rockchip RK3588/RK1828 设备上。
 
+## 两种部署，同一代码
+
+同一份源码同时支持两种形态，由平台档案在启动时决定：
+
+| | RK 一体机 | Intel 双机 |
+| --- | --- | --- |
+| 硬件 | RK3588 + RK1828（Ubuntu aarch64） | Windows 桌面 + Ubuntu 虚拟机 |
+| 语音 | 端侧 RKNN，NPU 路由 + CPU 回退 | 虚拟机桥接，FireRed 流式识别 |
+| 纪要 | RK1828 sidecar | Qwen3.5-35B 适配器 |
+| 电源 | 重启/关机菜单 | 退出应用 |
+
+构建：
+
+```bash
+./scripts/build-profile.sh rk --check      # 类型 + 编译检查
+./scripts/build-profile.sh intel --check
+./scripts/build-profile.sh rk              # 打包
+./scripts/build-profile.sh intel
+```
+
+架构说明、配置字段与实机验收清单见 [统一平台说明](docs/UNIFIED_PLATFORM.md)。
+
 ## 主要能力
 
 - 快速开始会议并实时显示逐字稿。

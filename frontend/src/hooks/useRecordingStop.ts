@@ -16,7 +16,7 @@ import { accessControlService } from '@/services/accessControlService';
 import type { SpeakerCalibrationResult } from '@/services/recordingService';
 import type { Transcript } from '@/types';
 import { minuteSummaryService } from '@/services/minuteSummaryService';
-import { finalizeMinuteSummaries } from '@/hooks/useMinuteSummaries';
+import { finalizeMinuteSummaries, cachedMinuteSummaries, attachMinuteSummaryMeeting } from '@/hooks/useMinuteSummaries';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
@@ -46,7 +46,7 @@ export function finalizedSpeakerSegmentsToTranscripts(
   // RK service versions return one full-meeting segment even when the live ASR
   // produced hundreds of chunks. Never replace those chunks with the merged
   // response; only overlay the speaker label that covers each chunk in time.
-  if (fallback.length > 0) {
+  if (fallback.length > 0 && calibration.transcription_mode !== 'full-meeting') {
     const calibrationSegments = calibration.segments;
     return fallback.map((transcript) => {
       const start = transcript.audio_start_time ?? transcript.chunk_start_time ?? 0;
@@ -349,6 +349,10 @@ export function useRecordingStop(
           console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
           await accessControlService.setMeetingPassword(meetingId, null);
           const summaryTemplateId = sessionStorage.getItem('pending_summary_template_id') || 'standard_meeting';
+          const summarySnapshot = cachedMinuteSummaries();
+          const summarySession = attachMinuteSummaryMeeting(meetingId);
+          try { if(summarySnapshot.length) await minuteSummaryService.save(meetingId,summarySnapshot); }
+          catch(error) { console.warn('分时摘要稍后重试保存',error); }
 
           // The meeting is durable at this point. Show password setup on top of
           // its transcript/summary page immediately; non-critical post-processing
@@ -363,6 +367,7 @@ export function useRecordingStop(
           sessionStorage.removeItem('active_recording_started_at');
           sessionStorage.removeItem('indexeddb_current_meeting_id');
           sessionStorage.removeItem('pending_minute_summaries');
+          sessionStorage.removeItem('pending_summary_session_token');
           sessionStorage.removeItem('pending_summary_template_id');
 
           const template = encodeURIComponent(summaryTemplateId);
@@ -395,8 +400,10 @@ export function useRecordingStop(
             }
           }
 
+          // Meeting navigation and password setup must not await optional LLM work.
+          void (async () => {
           try {
-            const minuteSummaries = await finalizeMinuteSummaries(freshTranscripts, summaryTemplateId);
+            const minuteSummaries = await finalizeMinuteSummaries(freshTranscripts, summaryTemplateId, summarySnapshot,summarySession);
             await minuteSummaryService.save(
               meetingId,
               minuteSummaries.filter((summary) => summary.status === 'completed'),
@@ -405,6 +412,7 @@ export function useRecordingStop(
             console.warn('Failed to finalize minute summaries:', error);
             toast.warning('分时摘要暂未完整写入会议文件', { description: '完整逐字稿已保存，最终总结仍可正常生成。' });
           }
+          })();
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
 

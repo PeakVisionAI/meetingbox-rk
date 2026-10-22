@@ -148,12 +148,17 @@ impl RkAsrProvider {
     }
 
     pub fn local() -> Result<Self, TranscriptionError> {
-        let backend = std::env::var("MEETINGBOX_ASR_BACKEND").unwrap_or_else(|_| "rk".to_string());
+        // Defaults come from the platform profile; environment variables still win so
+        // field debugging and existing installs keep working.
+        let profile = crate::platform::current();
+        let backend = std::env::var("MEETINGBOX_ASR_BACKEND")
+            .unwrap_or_else(|_| profile.asr_backend.clone());
         let cpu_url = std::env::var("MEETINGBOX_BOSSAI_ASR_URL").ok();
         let mut provider = Self::configured(&backend, cpu_url.as_deref())?;
         if provider.bossai.is_none() {
             provider.endpoint = super::rk_policy::validate_endpoint(
-                &std::env::var("MEETINGBOX_RK_ASR_URL").unwrap_or_else(|_| RK_ASR_ENDPOINT.into()),
+                &std::env::var("MEETINGBOX_RK_ASR_URL")
+                    .unwrap_or_else(|_| profile.asr_endpoint.clone()),
             )?;
         }
         if backend == "rk-npu" {
@@ -175,7 +180,7 @@ impl RkAsrProvider {
     }
 
     fn configured(backend: &str, endpoint: Option<&str>) -> Result<Self, TranscriptionError> {
-        let mut provider = Self::new(RK_ASR_ENDPOINT)?;
+        let mut provider = Self::new(crate::platform::current().asr_endpoint.clone())?;
         match backend {
             "rk" => {}
             "rk-npu" => {

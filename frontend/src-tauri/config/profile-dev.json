@@ -1,0 +1,28 @@
+{
+  "kind": "dev",
+  "label": "开发机（本地 Whisper）",
+  "asr": {
+    "endpoint": "http://127.0.0.1:8020",
+    "stream": false,
+    "backend": "rk"
+  },
+  "summary": {
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "model": "llama3.1",
+    "live_endpoint": "http://127.0.0.1:8050"
+  },
+  "services": [],
+  "knowledge": {
+    "enabled": false,
+    "endpoint": "http://127.0.0.1:8069",
+    "token_path": "",
+    "audio_cache": ""
+  },
+  "bootstrap_script": null,
+  "capabilities": {
+    "knowledge_center": false,
+    "power_actions": false,
+    "device_strip": false,
+    "service_readiness": false
+  }
+}

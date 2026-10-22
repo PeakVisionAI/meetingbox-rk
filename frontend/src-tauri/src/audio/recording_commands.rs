@@ -92,7 +92,11 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
     let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
         .map_err(|error| error.to_string())?;
+    let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    // The knowledge centre holds an exclusive lease on the speech stack.
+    crate::knowledge_center::require_meeting_mode()?;
+    let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -324,7 +328,11 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
     let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
         .map_err(|error| error.to_string())?;
+    let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    // The knowledge centre holds an exclusive lease on the speech stack.
+    crate::knowledge_center::require_meeting_mode()?;
+    let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -562,16 +570,6 @@ pub async fn stop_recording<R: Runtime>(
         }
     }
 
-    // Step 1.5: Clean up transcript listener to release microphone
-    // Unlisten transcript-update event to prevent lingering references
-    {
-        use tauri::Listener;
-        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
-            app.unlisten(listener_id);
-            info!("✅ Transcript-update listener removed");
-        }
-    }
-
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
     let _ = app.emit(
         "recording-shutdown-progress",
@@ -589,8 +587,19 @@ pub async fn stop_recording<R: Runtime>(
     };
 
     if let Some(task_handle) = transcription_task {
-        let drain_timeout = super::transcription::rk_policy::shutdown_timeout();
-        info!("⏳ Waiting up to {} seconds for pending transcription chunks", drain_timeout.as_secs());
+        // Streaming ASR has to flush its final utterance and a delayed speaker label, which
+        // can legitimately take minutes. The chunked RK path keeps the service policy deadline.
+        let streaming = super::transcription::asrserve_stream::enabled();
+        let drain_timeout = if streaming {
+            std::time::Duration::from_secs(3600)
+        } else {
+            super::transcription::rk_policy::shutdown_timeout()
+        };
+        info!(
+            "⏳ Waiting up to {} seconds for pending transcription chunks (streaming={})",
+            drain_timeout.as_secs(),
+            streaming
+        );
 
         // Enhanced progress monitoring during shutdown
         let progress_app = app.clone();
@@ -621,15 +630,21 @@ pub async fn stop_recording<R: Runtime>(
                 info!("✅ ALL transcription chunks processed successfully - no data lost");
             }
             Err(e) => {
-                super::transcription::rk_policy::mark_incomplete_session();
+                if !streaming {
+                    super::transcription::rk_policy::mark_incomplete_session();
+                }
                 warn!("⚠️ Transcription task completed with error: {:?}", e);
                 // Continue anyway - the worker may have processed most chunks
             }
             Ok(false) => {
-                super::transcription::rk_policy::mark_incomplete_session();
-                warn!("⏱️ Transcription timeout reached; workers cancelled and joined");
-                let _ = app.emit("transcription-warning",
-                    "转写等待超时，剩余片段已停止处理，可使用原始录音重新转写");
+                if streaming {
+                    warn!("⏱️ Streaming shutdown deadline reached; tail segments may be missing");
+                } else {
+                    super::transcription::rk_policy::mark_incomplete_session();
+                    warn!("⏱️ Transcription timeout reached; workers cancelled and joined");
+                    let _ = app.emit("transcription-warning",
+                        "转写等待超时，剩余片段已停止处理，可使用原始录音重新转写");
+                }
             }
         }
 
@@ -637,6 +652,16 @@ pub async fn stop_recording<R: Runtime>(
         progress_task.abort();
     } else {
         info!("ℹ️ No transcription task found to wait for");
+    }
+
+    // Keep the transcript listener alive until the streaming ASR tail (final utterance +
+    // delayed speaker label) has been persisted, then release the microphone reference.
+    {
+        use tauri::Listener;
+        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
+            app.unlisten(listener_id);
+            info!("✅ Transcript-update listener removed");
+        }
     }
 
     let _ = app.emit(

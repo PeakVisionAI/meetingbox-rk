@@ -390,8 +390,45 @@ impl SummaryService {
             api_key
         };
 
-        // Dynamically fetch context size based on provider and model
-        let token_threshold = if provider == LLMProvider::Ollama {
+        // Dynamically fetch context size based on provider and model.
+        // The local summary service advertises its prompt strategy through /health.
+        let profile = crate::platform::current();
+        let is_local_summary_service = provider == LLMProvider::CustomOpenAI
+            && custom_openai_endpoint
+                .as_deref()
+                .map(|endpoint| {
+                    let normalized = endpoint.trim_end_matches('/').trim_end_matches("/v1");
+                    normalized == profile.summary_endpoint.trim_end_matches("/v1")
+                        || endpoint.contains("127.0.0.1:8040")
+                        || endpoint.contains(":8020")
+                })
+                .unwrap_or(false);
+        let source_paragraph_mode = if is_local_summary_service {
+            match reqwest::Client::new()
+                .get(profile.summary_health_url())
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+            {
+                Ok(response) => response
+                    .json::<serde_json::Value>()
+                    .await
+                    .map(|health| {
+                        health["summarization"] == "source-paragraphs"
+                            || health["summarization"]
+                                .as_str()
+                                .map(|mode| mode.starts_with("formal-meeting-minutes"))
+                                .unwrap_or(false)
+                    })
+                    .unwrap_or(false),
+                Err(_) => false,
+            }
+        } else {
+            false
+        };
+        let token_threshold = if source_paragraph_mode {
+            100000
+        } else if provider == LLMProvider::Ollama {
             match METADATA_CACHE.get_or_fetch(&model_name, ollama_endpoint.as_deref()).await {
                 Ok(metadata) => {
                     // Reserve 300 tokens for prompt overhead
@@ -433,8 +470,9 @@ impl SummaryService {
             }
         } else if provider == LLMProvider::CustomOpenAI {
             // RK1828 Qwen3-4B context is 4096. Chunk long meetings instead of
-            // stuffing the whole transcript into one prefill.
-            1200
+            // stuffing the whole transcript into one prefill; larger local models
+            // (8B/35B builds) get a proportionally bigger window.
+            if model_name.to_lowercase().contains("qwen3-8b") { 7000 } else { 1200 }
         } else {
             // Cloud providers (OpenAI, Claude, Groq) handle large contexts automatically
             100000  // Effectively unlimited for single-pass processing
@@ -510,12 +548,15 @@ impl SummaryService {
         };
 
         let client = reqwest::Client::new();
+        // Fold per-minute incremental summaries into the final prompt when available.
+        let incremental_text =
+            super::incremental::context_for_meeting(&pool, &meeting_id, &text).await;
         let result = generate_meeting_summary(
             &client,
             &provider,
             &model_name,
             &final_api_key,
-            &text,
+            &incremental_text,
             &custom_prompt,
             &template_id,
             &template,

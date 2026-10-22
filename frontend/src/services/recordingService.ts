@@ -35,6 +35,7 @@ export interface SpeakerCalibrationResult {
   finalized: boolean;
   segments: FinalizedSpeakerSegment[];
   error?: string | null;
+  transcription_mode?: 'full-meeting' | null;
 }
 
 export interface StopRecordingResult {

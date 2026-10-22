@@ -11,6 +11,7 @@ pub mod bossai_provider;
 pub mod engine;
 pub mod worker;
 pub mod task;
+pub mod asrserve_stream;
 
 // Re-export commonly used types
 pub use provider::{TranscriptionError, TranscriptionProvider, TranscriptResult};

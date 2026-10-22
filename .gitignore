@@ -37,6 +37,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env
+.env.*
+!.env.example
 
 # vercel
 .vercel
@@ -55,19 +57,13 @@ next-env.d.ts
 docs/demo.mov
 docs/demo.gif
 
-
 meeting_minutes.db
 
 # Added by Task Master AI
-# Logs
 logs
 *.log
 dev-debug.log
-# Dependency directories
 node_modules/
-# Environment variables
-.env
-# Editor directories and files
 .idea
 .vscode
 *.suo
@@ -83,5 +79,20 @@ frontend/src-tauri/binaries/
 
 # Local RKNN deployment assets
 /services/rk-asr/libmeetingbox_rknn.so
+
+# Local runtime and private data (Intel profile)
 __pycache__/
-*.pyc
+*.py[cod]
+*.sqlite*
+*.gguf
+*.onnx
+*.bin
+*.safetensors
+meeting-data/
+meetily-recordings/
+.venv/
+venv/
+*.token
+**/embedding-model/
+**/audio-cache/
+services/knowledge-center/exports/

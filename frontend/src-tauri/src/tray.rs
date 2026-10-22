@@ -213,9 +213,11 @@ pub fn update_tray_menu<R: Runtime>(app: &AppHandle<R>) {
 
 pub fn set_tray_state<R: Runtime>(app: &AppHandle<R>, state: RecordingState) {
     log::info!("Tray: Setting intermediate state: {:?}", state);
+    let main_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
     // During recording state transitions, we assume recording is allowed (we're already recording)
-    if let Ok(menu) = build_menu(app, state, true) {
-        if let Some(tray) = app.tray_by_id("main-tray") {
+    if let Ok(menu) = build_menu(&main_app, state, true) {
+        if let Some(tray) = main_app.tray_by_id("main-tray") {
             let result = tray.set_menu(Some(menu));
             log::info!("Tray: Intermediate state menu update result: {:?}", result);
         } else {
@@ -223,6 +225,9 @@ pub fn set_tray_state<R: Runtime>(app: &AppHandle<R>, state: RecordingState) {
         }
     } else {
         log::error!("Tray: Failed to build menu for intermediate state");
+    }
+    }) {
+        log::error!("Tray: Failed to schedule intermediate state update: {}", error);
     }
 }
 
@@ -293,8 +298,10 @@ pub async fn update_tray_menu_async<R: Runtime>(app: &AppHandle<R>) {
     let can_record = check_can_record(app).await;
     log::info!("Tray: can_record: {}", can_record);
 
-    if let Ok(menu) = build_menu(app, recording_state, can_record) {
-        if let Some(tray) = app.tray_by_id("main-tray") {
+    let main_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+      if let Ok(menu) = build_menu(&main_app, recording_state, can_record) {
+        if let Some(tray) = main_app.tray_by_id("main-tray") {
             let result = tray.set_menu(Some(menu));
             log::info!("Tray: Menu update result: {:?}", result);
         } else {
@@ -302,6 +309,9 @@ pub async fn update_tray_menu_async<R: Runtime>(app: &AppHandle<R>) {
         }
     } else {
         log::error!("Tray: Failed to build menu");
+    }
+    }) {
+        log::error!("Tray: Failed to schedule main-thread menu update: {}", error);
     }
 }
 

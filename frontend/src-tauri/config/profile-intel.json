@@ -1,0 +1,32 @@
+{
+  "kind": "intel",
+  "label": "Intel 双机（Windows 桌面 + Ubuntu 虚拟机服务）",
+  "asr": {
+    "endpoint": "http://192.168.44.50:8020",
+    "stream": true,
+    "backend": "rk"
+  },
+  "summary": {
+    "endpoint": "http://192.168.44.1:8061/v1",
+    "model": "meetingbox-35b",
+    "live_endpoint": "http://192.168.44.1:8050"
+  },
+  "services": [
+    { "name": "语音识别与字词对齐", "url": "http://192.168.44.1:8060/health", "require_fast_realtime": false },
+    { "name": "语音标点", "url": "http://192.168.44.1:8063/health", "require_fast_realtime": false },
+    { "name": "实时转写与说话人识别", "url": "http://192.168.44.50:8020/healthz", "require_fast_realtime": true }
+  ],
+  "knowledge": {
+    "enabled": true,
+    "endpoint": "http://127.0.0.1:8069",
+    "token_path": "D:\\MeetingBox-Intel\\knowledge-center\\service.token",
+    "audio_cache": "D:\\MeetingBox-Intel\\knowledge-center\\audio-cache"
+  },
+  "bootstrap_script": "D:\\MeetingBox-Intel\\app\\Ensure-LocalServices.ps1",
+  "capabilities": {
+    "knowledge_center": true,
+    "power_actions": false,
+    "device_strip": false,
+    "service_readiness": true
+  }
+}

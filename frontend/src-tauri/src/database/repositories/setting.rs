@@ -39,9 +39,18 @@ pub const RK_TRANSCRIPT_MODEL: &str = "sensevoice-rknn";
 impl SettingsRepository {
     pub fn rk_summary_config() -> CustomOpenAIConfig {
         CustomOpenAIConfig {
-            endpoint: RK_SUMMARY_ENDPOINT.to_string(),
+            endpoint: std::env::var("MEETINGBOX_SUMMARY_LLM_URL")
+                .unwrap_or_else(|_| crate::platform::current().summary_endpoint.clone()),
             api_key: None,
-            model: RK_SUMMARY_MODEL.to_string(),
+            model: std::env::var("MEETINGBOX_SUMMARY_MODEL")
+                .unwrap_or_else(|_| {
+                    let profile = crate::platform::current();
+                    if profile.summary_model.is_empty() {
+                        RK_SUMMARY_MODEL.to_string()
+                    } else {
+                        profile.summary_model.clone()
+                    }
+                }),
             max_tokens: Some(RK_SUMMARY_MAX_TOKENS),
             temperature: Some(RK_SUMMARY_TEMPERATURE),
             top_p: Some(RK_SUMMARY_TOP_P),
