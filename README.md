@@ -22,7 +22,8 @@
 ./scripts/build-profile.sh intel
 ```
 
-架构说明、配置字段与实机验收清单见 [统一平台说明](docs/UNIFIED_PLATFORM.md)。
+架构说明、配置字段与实机验收清单见 [统一平台说明](docs/UNIFIED_PLATFORM.md)；
+RK 上跑 Intel 完整功能的部署方式与缺口见 [RK 功能对照](docs/RK_FEATURE_PARITY.md)。
 
 ## 主要能力
 

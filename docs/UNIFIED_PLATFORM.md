@@ -59,6 +59,10 @@ Platform profile: intel (Intel 双机（Windows 桌面 + Ubuntu 虚拟机服务�
 ```
 
 前端通过 Tauri 命令 `get_platform_profile` 拿到能力开关，不再靠 UA 猜平台。
+内置档案有三个半：`profile-intel.json`、`profile-rk.json`（RK 默认，分块 ASR）、
+`profile-dev.json`，以及 **`profile-rk-bridge.json`**——RK 硬件跑 Intel 那套服务栈，
+功能与 Intel 对齐，只有模型不同（见 [RK 功能对照](RK_FEATURE_PARITY.md)）。
+用 `MEETINGBOX_CONFIG` 指向该文件即可切换，不需要改代码。
 
 ---
 

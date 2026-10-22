@@ -97,13 +97,17 @@ locks: dict[int, asyncio.Lock] = {}
 inference_slot = asyncio.Lock()
 streams: dict[int, "LiveStream"] = {}
 FAST_ENABLED = os.getenv("MEETINGBOX_FAST_ASR", "0") == "1"
+# Engine selection. "rknn" reuses the Intel streaming pipeline but decodes through the
+# on-device SenseVoice service, so only the model differs between both products.
+PRIMARY_ASR = os.getenv("MEETINGBOX_PRIMARY_ASR", "").strip().lower()
+STREAMING_ENGINE = FAST_ENABLED or PRIMARY_ASR == "rknn"
 fast_ready = False
 
 
 @app.on_event("startup")
 async def warm_fast_asr():
     global fast_ready
-    if FAST_ENABLED:
+    if FAST_ENABLED and PRIMARY_ASR != "rknn":
         from fast_stream import warmup
         await asyncio.to_thread(warmup)
         fast_ready = True
@@ -215,12 +219,16 @@ async def stream_audio(meeting_id: int, request: Request, chunk_index: int):
         if meeting_id not in streams:
             if (p / "stream.pcm").exists():
                 raise HTTPException(409, "stream interrupted; finalize retained audio before a new meeting")
-            if FAST_ENABLED:
-                from fast_stream import FastStream
-                if os.getenv('MEETINGBOX_PRIMARY_ASR','')=='fire_red':
+            if STREAMING_ENGINE:
+                if PRIMARY_ASR == 'rknn':
+                    from rknn_stream import RknnStream
+                    stream = RknnStream(meeting_id, p)
+                elif PRIMARY_ASR == 'fire_red':
                     from fire_red_stream import FireRedStream
                     stream=FireRedStream(meeting_id,p)
-                else:stream=FastStream(meeting_id,p)
+                else:
+                    from fast_stream import FastStream
+                    stream=FastStream(meeting_id,p)
             else:
                 stream = LiveStream(meeting_id)
             try:
@@ -245,7 +253,7 @@ async def stream_audio(meeting_id: int, request: Request, chunk_index: int):
                 output.write(pcm)
             stream.samples += len(pcm) // 2
             stream.last_index = chunk_index
-            if FAST_ENABLED:
+            if STREAMING_ENGINE:
                 await stream.feed(pcm)
                 return stream.take()
             for offset in range(0, len(pcm), 20480):
@@ -376,6 +384,23 @@ async def health():
     global fast_ready
     if time.monotonic() < final_summary_until:
         return {'ready': False, 'mode': 'knowledge' if knowledge_owner else 'final-summary', 'fast_realtime': False}
+    if PRIMARY_ASR == "rknn":
+        # On-device engine: report the SenseVoice sidecar instead of the Intel stack.
+        url = os.getenv("MEETINGBOX_RK_ASR_URL", "http://127.0.0.1:8020").rstrip("/") + "/healthz"
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                state = response.json()
+        except (httpx.HTTPError, ValueError):
+            return {"ready": False, "backend": "asrserve-rknn", "error": "RK ASR unavailable",
+                    "fast_realtime": False}
+        ready = state.get("ready") is True
+        return {"ready": ready, "fast_realtime": ready, "backend": "asrserve-rknn",
+                "engine": "sensevoice-rknn", "upstream": state,
+                "audio_enhancement": os.getenv("MEETINGBOX_AUDIO_ENHANCE", "off"),
+                "punctuation": {"enabled": False, "model": None}}
+
     if FAST_ENABLED and not fast_ready:
         from fast_stream import warmup
         await asyncio.to_thread(warmup)
