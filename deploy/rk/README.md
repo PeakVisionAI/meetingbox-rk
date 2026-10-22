@@ -84,6 +84,39 @@ python3 smoke_rk.py --wav sample.wav       # 真实录音：16kHz 单声道 16bi
 3 秒单段 → `chunks=15 finals=1 partials=13`；两段中间隔 1 秒静音 →
 `finals=2`，边界在 2000ms。**未验证的只有 NPU 推理本身。**
 
+## 2.6 实测记录（192.168.20.187）
+
+设备：RK3588 / Ubuntu 22.04.5 / 8 核 / 7.7 GB / Python 3.10.12。
+
+**现场已有一套产品在跑**（`/opt/meeting-box`，systemd 单元 `asr/diar/llm/audio/boxd/...`），
+端口占用与我们的档案冲突，因此测试实例改用：
+
+| 用途 | 现场服务 | 我们的测试实例 |
+| --- | --- | --- |
+| ASR | `:8020`（asr.service，NPU） | 复用，不改 |
+| 说话人 | `:8030`（diar.service，pyannote+eres2net） | 复用，不改 |
+| 纪要 LLM | `:8040`（llm.service，RK1828） | 复用（当前 init 失败） |
+| 桥接 | — | **`:8130`**（`/opt/meetingbox-rk`，venv + uvicorn） |
+
+实测（`smoke_rk.py --wav`）：
+
+| 样本 | 时长 | chunks | finals | 说话人 | 耗时 | RTF |
+| --- | --- | --- | --- | --- | --- | --- |
+| 单人中文 | 5.7 s | 29 | 2 | 发言人 1 | 2.78 s | 0.49 |
+| 两人交替（Flo→Eddy→Flo） | 9.6 s | 49 | 3 | 发言人 1 / 2 / 1 | 3.70 s | 0.39 |
+
+结论：**NPU 识别、设备侧分人、流式分段、标点兜底、句内时间在真机上全部工作**；
+两人交替的说话人编号稳定，同一人跨句保持同一标签。
+
+现场发现的两个既有问题（不属于本次改动）：
+
+1. `asr.service` 的 Qwen3-ASR 后端缺 `ztu_somemodelruntime_ez_rknn_async` 模块，
+   自动回退到 `sherpa-onnx-paraformer-zh-int8`（回退路径本身是正常的）；
+2. `llm.service` 的 RK1828 报 `init_runtime failed: -1`，模型未加载。
+
+资源提示：`meetingbox-voice`（唤醒词）常驻占 39% 单核并占用音频设备，它拉起的
+`meetingbox-live-asr/server.py` 另占 1.5 GB；测试前停掉二者，可用内存从 3.3 GB 升到 5.0 GB。
+
 ## 3. 引擎参数
 
 `rknn_stream` 的默认值针对 RK3588 NPU 的 30 秒 SenseVoice 模型；都在 unit 里可调：

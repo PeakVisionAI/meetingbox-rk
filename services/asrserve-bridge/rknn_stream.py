@@ -125,9 +125,14 @@ class RknnStream:
         async with self.lock:
             if not self.done.is_set():
                 pcm = bytes(self.buffer.tobytes())
-                text = await asyncio.to_thread(self._decode, pcm, self.buffer_start_ms)
+                text, speaker = await asyncio.to_thread(
+                    self._decode, pcm, self.buffer_start_ms
+                )
                 if text.strip():
-                    await self._emit_final(pcm, text, self.buffer_start_ms + len(self.buffer) // 16)
+                    await self._emit_final(
+                        pcm, text, self.buffer_start_ms + len(self.buffer) // 16,
+                        speaker=speaker,
+                    )
                 self.buffer = array("h")
                 self.done.set()
                 (self.folder / "live-final.json").write_text(
@@ -187,18 +192,22 @@ class RknnStream:
         if len(pcm) < SAMPLE_RATE // 2:
             return
         started = time.monotonic()
-        text = await asyncio.to_thread(self._decode, bytes(pcm.tobytes()), window_start)
+        text, speaker = await asyncio.to_thread(
+            self._decode, bytes(pcm.tobytes()), window_start
+        )
         self.last_decode_cost_s = time.monotonic() - started
         self.last_decode_ms = position_ms
         if text and text != self.last_text:
-            self._publish(text, False, position_ms)
+            self._publish(text, False, position_ms, speaker=speaker)
 
     async def _close_utterance(self, position_ms):
         pcm = bytes(self.buffer.tobytes())
         if len(pcm) >= 3200:
-            text = await asyncio.to_thread(self._decode, pcm, self.buffer_start_ms)
+            text, speaker = await asyncio.to_thread(
+                self._decode, pcm, self.buffer_start_ms
+            )
             if text.strip():
-                await self._emit_final(pcm, text, position_ms)
+                await self._emit_final(pcm, text, position_ms, speaker=speaker)
         self.index += 1
         self.start_ms = position_ms
         self.buffer_start_ms = position_ms
@@ -207,18 +216,23 @@ class RknnStream:
         self.trailing_silence_ms = 0
         self.last_decode_ms = position_ms
 
-    async def _emit_final(self, pcm, text, end_ms):
-        """Punctuate, time and label one closed utterance, then publish it."""
+    async def _emit_final(self, pcm, text, end_ms, speaker=None):
+        """Punctuate, time and label one closed utterance, then publish it.
+
+        Speaker precedence: local embedding cluster (when a model is configured)
+        > label returned by the ASR service > unlabelled.
+        """
         duration_ms = end_ms - self.buffer_start_ms
         refined = self.punctuator.process(text)
         timing = utterance_timing(refined, self.buffer_start_ms, end_ms)
         embedding = await asyncio.to_thread(self.embedder.embed, pcm)
         speaker_index = self.cluster.assign(embedding, duration_ms)
+        local_label = OnlineSpeakerCluster.label(speaker_index)
         self._publish(
             refined,
             True,
             end_ms,
-            speaker=OnlineSpeakerCluster.label(speaker_index),
+            speaker=local_label or speaker,
             timing=timing,
         )
 
@@ -255,7 +269,18 @@ class RknnStream:
             self.failure = f"RK ASR unavailable: {error}"
             raise RuntimeError(self.failure) from error
         segments = payload.get("segments") or []
-        return "".join(str(segment.get("text", "")).strip() for segment in segments).strip()
+        text = "".join(str(segment.get("text", "")).strip() for segment in segments).strip()
+        # The device ASR already assigns speakers; keep the first usable label so a
+        # local (or absent) embedding model never overwrites better information.
+        speaker = next(
+            (
+                str(segment.get("speaker"))
+                for segment in segments
+                if segment.get("speaker") and "待识别" not in str(segment.get("speaker"))
+            ),
+            None,
+        )
+        return text, speaker
 
     # -- output ------------------------------------------------------------
 

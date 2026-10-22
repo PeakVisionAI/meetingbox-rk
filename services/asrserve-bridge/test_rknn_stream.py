@@ -24,6 +24,7 @@ CHUNK_SAMPLES = 3200  # 200 ms at 16 kHz
 
 class StubEngine(BaseHTTPRequestHandler):
     calls = []
+    speaker = None
 
     def log_message(self, *args):
         pass
@@ -47,7 +48,8 @@ class StubEngine(BaseHTTPRequestHandler):
         index = len(StubEngine.calls) + 1
         StubEngine.calls.append(index)
         payload = json.dumps(
-            {"segments": [{"text": f"第{index}段", "speaker": None}], "backend": "sensevoice-rknn"}
+            {"segments": [{"text": f"第{index}段", "speaker": StubEngine.speaker}],
+             "backend": "sensevoice-rknn"}
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -161,6 +163,22 @@ class RknnStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(record["token_times_ms"]), len(record["text"]))
         self.assertTrue(record["text"].endswith("。"), "punctuation fallback must terminate")
         self.assertEqual(stream.embedder.calls, 1)
+
+    async def test_device_speaker_label_survives_without_local_model(self):
+        """The device ASR already diarizes; a missing local model must not erase it."""
+        StubEngine.speaker = "发言人2"
+        stream = rknn_stream.RknnStream(12, self.folder)
+        try:
+            await stream.open("")
+            for _ in range(5):
+                await stream.feed(speech_chunk())
+            for _ in range(3):
+                await stream.feed(silence_chunk())
+        finally:
+            StubEngine.speaker = None
+        finals = [r for r in stream.take()["segments"] if not r["is_partial"]]
+        self.assertTrue(finals)
+        self.assertEqual(finals[-1]["speaker"], "发言人2")
 
     def test_record_schema_matches_bridge_contract(self):
         stream = rknn_stream.RknnStream(10, self.folder)

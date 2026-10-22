@@ -32,7 +32,10 @@ import wave
 SAMPLE_RATE = 16000
 CHUNK_MS = 200
 CHUNK_BYTES = SAMPLE_RATE * 2 * CHUNK_MS // 1000
-MEETING_ID = 990001
+# A fresh id per run: the bridge keeps per-meeting stream state for one hour and
+# rejects replayed chunk indexes, so a fixed id would fail on the second run.
+def default_meeting_id():
+    return int(time.time()) % 900_000 + 1_000
 
 
 def http_get(url, timeout=5):
@@ -98,8 +101,8 @@ def tone(seconds):
     return bytes(samples)
 
 
-def stream(bridge, pcm):
-    stream_url = f"{bridge}/v1/asr/stream/{MEETING_ID}"
+def stream(bridge, pcm, meeting_id):
+    stream_url = f"{bridge}/v1/asr/stream/{meeting_id}"
     segments, finals, partials = {}, 0, 0
     started = time.monotonic()
     total = 0
@@ -145,6 +148,7 @@ def main():
     parser.add_argument("--wav")
     parser.add_argument("--tone", type=float, help="generated sine seconds (plumbing only)")
     parser.add_argument("--health-only", action="store_true")
+    parser.add_argument("--meeting-id", type=int, default=None)
     args = parser.parse_args()
 
     args.bridge = args.bridge.rstrip("/")
@@ -165,7 +169,9 @@ def main():
         return 0
 
     print(f"[3/4] streaming {len(pcm) / (SAMPLE_RATE * 2):.1f}s in {CHUNK_MS}ms windows")
-    segments, finals, partials, chunks, elapsed = stream(args.bridge, pcm)
+    meeting_id = args.meeting_id or default_meeting_id()
+    print(f"      meeting_id={meeting_id}")
+    segments, finals, partials, chunks, elapsed = stream(args.bridge, pcm, meeting_id)
 
     print(f"[4/4] chunks={chunks} finals={finals} partials={partials} "
           f"elapsed={elapsed:.2f}s")
