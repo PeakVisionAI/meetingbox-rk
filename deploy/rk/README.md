@@ -140,6 +140,50 @@ python3 smoke_rk.py --wav sample.wav       # 真实录音：16kHz 单声道 16bi
 识别文本对照（真人「数数」）：`你好你好嗯觉得说现在一二三四五六七八九十…三十。`
 数字全部正确，说明远场拾音与模型链路可用。
 
+## 2.8 故障恢复：RK1828 掉卡
+
+**症状**
+
+```bash
+curl -s localhost:8040/healthz
+# {"model_loaded":false,"detail":"RuntimeError: init_runtime failed: -1"}
+journalctl -u llm | grep RKNN3
+# ValueError: RKNN3 init failed. error code: RKNN3_ERR_DEVICE_UNAVAILABLE
+```
+
+**判定**：这是卡侧固件/PCIe 链路问题，不是模型或配置问题。
+
+```bash
+lspci -nn | grep 182a                  # 卡仍在总线上（1d87:182a）
+dmesg -T | grep -i "pcie-rkep"         # 会有 "failed to transfer dma, ret=-14"
+journalctl -u rknn3 | tail             # 会看到 "Device boot state: 0xffffffff"
+```
+
+**无效的尝试**（我试过，确认没用）
+
+| 操作 | 结果 |
+| --- | --- |
+| `systemctl restart llm` | 仍 `DEVICE_UNAVAILABLE` |
+| 另起一个用户态实例（换端口） | 同样失败 → 排除"进程残留" |
+| `systemctl restart rknn3` | 起不来：`insmod: File exists`，脚本跳过固件下载 |
+| PCIe unbind + rescan | 设备回来，但固件仍不下载 |
+| `rmmod pcie-rkep` 后再 start | `Device boot state: 0xffffffff`，loader 无响应 |
+
+**唯一有效**：重启整机。`rknn3.service` 在 `sysinit.target` 阶段跑 `pcie_upgrade_tool -s <addr> uf`，
+只有这一次开机时序能把卡重新拉进 loader 模式。
+
+```bash
+sudo systemctl reboot
+# 起来后确认固件下载成功：
+journalctl -u rknn3 -n 20 | grep -E "Downloading firmware OK|boot state"
+# llm 模型加载需要 30–60 秒，之后 model_loaded 才会变 true
+```
+
+实测：重启后 `Downloading firmware OK` → 30 秒内 `model_loaded: true` → 一次生成 0.6 秒。
+
+**重启后注意**：`meetingbox-voice` 会自启，常驻 39% 单核并占用麦克风，
+测录音前要 `sudo systemctl stop meetingbox-voice`。
+
 ## 3. 引擎参数
 
 `rknn_stream` 的默认值针对 RK3588 NPU 的 30 秒 SenseVoice 模型；都在 unit 里可调：
