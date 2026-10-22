@@ -17,7 +17,22 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
 from pydantic import BaseModel, Field
-from summary_memory import memory_messages,validate_state
+# Incremental-summary helpers live next to the qwen adapter. The RK deployment does
+# not ship that service, so the import is optional and the affected endpoint degrades.
+try:
+    from summary_memory import memory_messages, validate_state
+except ImportError:  # pragma: no cover - depends on deployment layout
+    import pathlib as _pathlib
+    import sys as _sys
+
+    _sibling = _pathlib.Path(__file__).resolve().parent.parent / "qwen-openvino"
+    if _sibling.is_dir():
+        _sys.path.insert(0, str(_sibling))
+    try:
+        from summary_memory import memory_messages, validate_state
+    except ImportError:
+        memory_messages = None
+        validate_state = None
 
 app = FastAPI(title="MeetingBox AsrServe compatibility service")
 ASR_URL = os.getenv("ASRSERVE_URL", "http://127.0.0.1:17003").rstrip("/")
@@ -694,7 +709,10 @@ async def summary(request: SummaryRequest):
         async with httpx.AsyncClient(timeout=230) as client:
             response = await client.post(LLM_URL.removesuffix('/v1')+'/api/incremental',json=request.model_dump())
             response.raise_for_status()
-            structure = validate_state(response.json()['structure'],previous,text)
+            raw_structure = response.json()['structure']
+            if validate_state is None:
+                raise HTTPException(503, 'incremental summary requires the qwen adapter helpers')
+            structure = validate_state(raw_structure,previous,text)
         if not isinstance(structure, dict) or not isinstance(structure.get("summary"), str):
             raise ValueError("invalid summary")
         if not isinstance(structure.get('context_summary'),str):raise ValueError('missing cumulative context')

@@ -37,9 +37,12 @@ Windows / Linux 桌面端（同一份 Tauri 应用）
 假设安装到 `/opt/meetingbox-rk`：
 
 ```bash
-# 1) 语言运行时（只用标准库 + fastapi/httpx/uvicorn）
+# 1) 语言运行时
 python3 -m venv /opt/meetingbox-rk/venv
-/opt/meetingbox-rk/venv/bin/pip install fastapi uvicorn httpx pydantic
+# python-multipart 是 FastAPI 表单端点的硬依赖，缺了 bridge 起不来
+/opt/meetingbox-rk/venv/bin/pip install fastapi uvicorn httpx pydantic python-multipart
+# 只在需要声纹/标点时才装（aarch64 有 manylinux wheel）
+/opt/meetingbox-rk/venv/bin/pip install sherpa-onnx
 
 # 2) 端侧 ASR 服务（NPU）
 python3 -B services/rk-asr/prepare.py --output services/rk-asr/models
@@ -62,6 +65,24 @@ export MEETINGBOX_CONFIG=/opt/meetingbox-rk/frontend/src-tauri/config/profile-rk
 ```
 
 ---
+
+## 2.5 上板后的最小验证
+
+构建 Tauri 应用之前，先用自带脚本把服务层跑通（纯标准库，不需要前端）：
+
+```bash
+cd /opt/meetingbox-rk/services/asrserve-bridge
+python3 smoke_rk.py --health-only          # 两项服务是否就绪
+python3 smoke_rk.py --tone 3               # 合成音：只验链路，不验识别
+python3 smoke_rk.py --wav sample.wav       # 真实录音：16kHz 单声道 16bit
+```
+
+通过标准：`RESULT: PASS`，并且 `finals >= 1`；两人对话录音应看到多段、
+`elapsed` 不超过音频时长的 3 倍。失败时会直接打印哪一项不满足。
+
+我已在 macOS 上用桩服务验证过整条链路（真实 bridge + `rknn_stream` + 静音切句）：
+3 秒单段 → `chunks=15 finals=1 partials=13`；两段中间隔 1 秒静音 →
+`finals=2`，边界在 2000ms。**未验证的只有 NPU 推理本身。**
 
 ## 3. 引擎参数
 
