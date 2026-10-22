@@ -6,11 +6,9 @@ pub mod provider;
 pub mod whisper_provider;
 pub mod parakeet_provider;
 pub mod rk_asr_provider;
-pub mod rk_policy;
-pub mod bossai_provider;
 pub mod engine;
 pub mod worker;
-pub mod task;
+pub mod asrserve_stream;
 
 // Re-export commonly used types
 pub use provider::{TranscriptionError, TranscriptionProvider, TranscriptResult};

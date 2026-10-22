@@ -16,7 +16,7 @@ export interface MeetingMetadata {
 }
 
 export interface StoredTranscript {
-  id?: number;                // Auto-increment primary key
+  id?: number | string;       // Stable live IDs or legacy auto-increment keys
   meetingId: string;          // Foreign key to meetings store
   text: string;               // Transcript text
   timestamp: string;          // ISO 8601 timestamp
@@ -234,6 +234,7 @@ class IndexedDBService {
       const storedTranscript: StoredTranscript = {
         ...transcript,
         meetingId,
+        sequenceId: transcript.sequence_id ?? transcript.sequenceId ?? 0,
         storedAt: Date.now()
       };
 
@@ -241,9 +242,14 @@ class IndexedDBService {
       const transcriptsStore = transaction.objectStore('transcripts');
       const meetingsStore = transaction.objectStore('meetings');
 
-      // Save transcript
+      const isUpdate = transcript.source === 'LiveStream' && await new Promise<boolean>((resolve, reject) => {
+        const request = transcriptsStore.get(storedTranscript.id!);
+        request.onsuccess = () => resolve(Boolean(request.result));
+        request.onerror = () => reject(request.error);
+      });
+      // Stable IDs replace partial text and speaker attribution in place.
       await new Promise<void>((resolve, reject) => {
-        const request = transcriptsStore.add(storedTranscript);
+        const request = transcript.source === 'LiveStream' ? transcriptsStore.put(storedTranscript) : transcriptsStore.add(storedTranscript);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
       });
@@ -257,7 +263,7 @@ class IndexedDBService {
 
       if (meeting) {
         meeting.lastUpdated = Date.now();
-        meeting.transcriptCount += 1;
+        if (!isUpdate) meeting.transcriptCount += 1;
         await new Promise<void>((resolve, reject) => {
           const request = meetingsStore.put(meeting);
           request.onsuccess = () => resolve();

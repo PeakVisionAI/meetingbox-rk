@@ -12,7 +12,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use super::transcription::task::TranscriptionTask;
+use tokio::task::JoinHandle;
 
 use super::{
     parse_audio_device,
@@ -42,9 +42,7 @@ static IS_RECORDING: AtomicBool = AtomicBool::new(false);
 
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
-static TRANSCRIPTION_TASK: Mutex<Option<TranscriptionTask>> = Mutex::new(None);
-static ASR_OPERATION: Mutex<Option<super::transcription::rk_policy::AsrOperationGuard>> = Mutex::new(None);
-static STOP_RECORDING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
@@ -90,9 +88,10 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         meeting_name
     );
 
-    let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
-        .map_err(|error| error.to_string())?;
+    let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    crate::knowledge_center::require_meeting_mode()?;
+    let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -118,6 +117,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     }
     info!("✅ Transcription model validation passed");
     refresh_hotwords(&app).await;
+    let _ = app.emit("recording-start-progress", "正在连接会议麦克风");
     let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
     info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
@@ -228,6 +228,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     });
 
     // Start recording with resolved devices (replaces start_recording_with_defaults_and_auto_save call)
+    let _ = app.emit("recording-start-progress", "正在初始化录音设备");
     let transcription_receiver = manager
         .start_recording(microphone_device, system_device, auto_save)
         .await
@@ -242,7 +243,6 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
-    *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
@@ -322,9 +322,10 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         mic_device_name, system_device_name, meeting_name
     );
 
-    let operation_guard = super::transcription::rk_policy::AsrOperationGuard::acquire()
-        .map_err(|error| error.to_string())?;
+    let _ = app.emit("recording-start-progress", "正在等待录音资源释放");
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    crate::knowledge_center::require_meeting_mode()?;
+    let _ = app.emit("recording-start-progress", "正在检查语音模型");
 
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
@@ -350,6 +351,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     }
     info!("✅ Transcription model validation passed");
     refresh_hotwords(&app).await;
+    let _ = app.emit("recording-start-progress", "正在连接会议麦克风");
     let rk_meeting_id = super::transcription::rk_asr_provider::begin_meeting_session();
     info!("RK ASR meeting_id for this recording: {}", rk_meeting_id);
 
@@ -419,6 +421,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     });
 
     // Start recording with specified devices and auto_save setting
+    let _ = app.emit("recording-start-progress", "正在初始化录音设备");
     let transcription_receiver = manager
         .start_recording(mic_device, system_device, auto_save)
         .await
@@ -433,7 +436,6 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("🔍 Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
-    *ASR_OPERATION.lock().unwrap() = Some(operation_guard);
     drop(engine_lifecycle_guard);
     reset_speech_detected_flag(); // Reset for new recording session
 
@@ -511,7 +513,6 @@ pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
     _args: RecordingArgs,
 ) -> Result<StopRecordingResult, String> {
-    let _stop_guard = STOP_RECORDING_LOCK.lock().await;
     info!(
         "🛑 Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
     );
@@ -562,16 +563,6 @@ pub async fn stop_recording<R: Runtime>(
         }
     }
 
-    // Step 1.5: Clean up transcript listener to release microphone
-    // Unlisten transcript-update event to prevent lingering references
-    {
-        use tauri::Listener;
-        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
-            app.unlisten(listener_id);
-            info!("✅ Transcript-update listener removed");
-        }
-    }
-
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
     let _ = app.emit(
         "recording-shutdown-progress",
@@ -582,15 +573,14 @@ pub async fn stop_recording<R: Runtime>(
         }),
     );
 
-    // Drain pending transcription within the shutdown deadline, then cancel and join.
+    // Wait for transcription task with enhanced progress monitoring (NO TIMEOUT - we must process all chunks)
     let transcription_task = {
         let mut global_task = TRANSCRIPTION_TASK.lock().unwrap();
         global_task.take()
     };
 
     if let Some(task_handle) = transcription_task {
-        let drain_timeout = super::transcription::rk_policy::shutdown_timeout();
-        info!("⏳ Waiting up to {} seconds for pending transcription chunks", drain_timeout.as_secs());
+        info!("⏳ Waiting for ALL transcription chunks to be processed (no timeout - preserving every chunk)");
 
         // Enhanced progress monitoring during shutdown
         let progress_app = app.clone();
@@ -616,20 +606,20 @@ pub async fn stop_recording<R: Runtime>(
         });
 
         // Wait for remaining chunks, but do not freeze the UI if ASR is stuck.
-        match task_handle.finish(drain_timeout).await {
-            Ok(true) => {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(if super::transcription::asrserve_stream::enabled() { 3600 } else { 45 }),
+            task_handle
+        ).await {
+            Ok(Ok(())) => {
                 info!("✅ ALL transcription chunks processed successfully - no data lost");
             }
-            Err(e) => {
-                super::transcription::rk_policy::mark_incomplete_session();
+            Ok(Err(e)) => {
                 warn!("⚠️ Transcription task completed with error: {:?}", e);
                 // Continue anyway - the worker may have processed most chunks
             }
-            Ok(false) => {
-                super::transcription::rk_policy::mark_incomplete_session();
-                warn!("⏱️ Transcription timeout reached; workers cancelled and joined");
-                let _ = app.emit("transcription-warning",
-                    "转写等待超时，剩余片段已停止处理，可使用原始录音重新转写");
+            Err(_) => {
+                warn!("⏱️ Transcription timeout reached, continuing shutdown");
+                // Continue shutdown even on timeout - better to lose some chunks than hang forever
             }
         }
 
@@ -637,6 +627,15 @@ pub async fn stop_recording<R: Runtime>(
         progress_task.abort();
     } else {
         info!("ℹ️ No transcription task found to wait for");
+    }
+
+    // Keep persistence listening until the continuous stream's final utterance
+    // and delayed speaker label have both arrived.
+    {
+        use tauri::Listener;
+        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
+            app.unlisten(listener_id);
+        }
     }
 
     let _ = app.emit(
@@ -760,6 +759,9 @@ pub async fn stop_recording<R: Runtime>(
     };
 
     // Now perform async analytics tracking without holding manager reference
+    // Optional telemetry must not delay durable recording save/navigation.
+    let analytics_app = app.clone();
+    tokio::spawn(async move {
     if let Some((total_duration, active_duration, pause_duration, transcript_segments_count, had_fatal_error, mic_device_name, sys_device_name, chunks_processed)) = analytics_data {
         info!("📊 Collecting analytics for meeting end");
 
@@ -781,8 +783,8 @@ pub async fn stop_recording<R: Runtime>(
 
         // Get transcription model info (already loaded above for model unload)
         let transcription_config = match crate::api::api::api_get_transcript_config(
-            app.clone(),
-            app.clone().state(),
+            analytics_app.clone(),
+            analytics_app.clone().state(),
             None,
         )
         .await
@@ -796,8 +798,8 @@ pub async fn stop_recording<R: Runtime>(
 
         // Get summary model info from API
         let summary_config = match crate::api::api::api_get_model_config(
-            app.clone(),
-            app.clone().state(),
+            analytics_app.clone(),
+            analytics_app.clone().state(),
             None,
         )
             .await
@@ -841,6 +843,8 @@ pub async fn stop_recording<R: Runtime>(
             Err(e) => warn!("⚠️ Failed to track analytics: {}", e),
         }
     }
+
+    });
 
     // Step 4: Finalize recording state and cleanup resources safely
     let _ = app.emit(
@@ -907,9 +911,6 @@ pub async fn stop_recording<R: Runtime>(
 
     // Database save removed - frontend will handle this after receiving all transcripts
     info!("ℹ️ Skipping database save in Rust - frontend will save after all transcripts received");
-
-    // Release operation ownership only after all workers and calibration finish.
-    ASR_OPERATION.lock().unwrap().take();
 
     // Step 5: Complete shutdown
     let _ = app.emit(
@@ -1264,3 +1265,4 @@ pub async fn attempt_device_reconnect(
         }
     }
 }
+

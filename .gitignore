@@ -80,8 +80,23 @@ experiments/
 target/
 
 frontend/src-tauri/binaries/
-
-# Local RKNN deployment assets
-/services/rk-asr/libmeetingbox_rknn.so
+# Local runtime and private data
 __pycache__/
-*.pyc
+*.py[cod]
+.env.*
+!.env.example
+*.sqlite*
+*.db
+*.gguf
+*.onnx
+*.bin
+*.safetensors
+meeting-data/
+meetily-recordings/
+.venv/
+venv/
+
+*.token
+**/embedding-model/
+**/audio-cache/
+services/knowledge-center/exports/

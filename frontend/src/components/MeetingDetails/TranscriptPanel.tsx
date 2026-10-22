@@ -59,6 +59,8 @@ export function TranscriptPanel({
   const [editingText, setEditingText] = useState('');
   const [editingSpeaker, setEditingSpeaker] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+  const [suggestingEdit, setSuggestingEdit] = useState(false);
+  const [correctionSuggestion, setCorrectionSuggestion] = useState<string | null>(null);
   const resolveSegment = useCallback((segment: TranscriptSegmentData): TranscriptSegmentData => {
     if (segment.speakerLabel) return { ...segment, speakerLabel: speakerLabels[segment.speakerLabel] ?? segment.speakerLabel };
     const match = segment.text.match(/^((?:候选发言人|发言人)[^：:\s]{1,20})[：:]\s*([\s\S]*)$/);
@@ -82,10 +84,26 @@ export function TranscriptPanel({
   }, [transcripts, usePagination, segments, resolveSegment]);
 
   const startEditing = (segment: TranscriptSegmentData) => {
+    if (suggestingEdit) return;
+    setCorrectionSuggestion(null);
     setEditingSegment(segment);
     setEditingText(segment.text);
     setEditingSpeaker(segment.speakerLabel ?? '');
     audioPlayer.playSegment(segment.timestamp, segment.endTime);
+  };
+
+  const suggestCorrection = async () => {
+    if (!editingSegment) return;
+    const requestedId = editingSegment.id;
+    setSuggestingEdit(true);
+    try {
+      const result = await productivityService.suggestTranscriptCorrection(requestedId);
+      setCorrectionSuggestion(result.suggestion);
+    } catch (error) {
+      toast.error('暂时无法生成校对建议', { description: String(error) });
+    } finally {
+      setSuggestingEdit(false);
+    }
   };
 
   const saveEdit = async () => {
@@ -186,12 +204,14 @@ export function TranscriptPanel({
       {editingSegment && (
         <div className="hyos-modal-backdrop">
           <div className="hyos-modal compact" role="dialog" aria-modal="true" aria-labelledby="transcript-edit-title">
-            <button className="hyos-modal-close" onClick={() => setEditingSegment(null)} aria-label="关闭">×</button>
+            <button className="hyos-modal-close" onClick={() => setEditingSegment(null)} disabled={suggestingEdit || savingEdit} aria-label="关闭">×</button>
             <h2 id="transcript-edit-title">音频与转写联动校对</h2>
             <p>已从 {formatTime(editingSegment.timestamp)} 播放对应录音，可修改说话人和转写内容。</p>
             <label>说话人<input value={editingSpeaker} onChange={(event) => setEditingSpeaker(event.target.value)} placeholder="例如：张经理" /></label>
             <label>转写内容<textarea className="hyos-modal-textarea" value={editingText} onChange={(event) => setEditingText(event.target.value)} /></label>
-            <div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => setEditingSegment(null)}>取消</button><button className="hyos-primary" onClick={saveEdit} disabled={savingEdit || !editingText.trim()}>{savingEdit ? '正在保存…' : '保存校对'}</button></div>
+            <button className="hyos-secondary" onClick={suggestCorrection} disabled={suggestingEdit || savingEdit}>{suggestingEdit ? '正在生成建议…' : 'AI 校对建议'}</button>
+            {correctionSuggestion !== null && <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3"><p className="mb-2 text-sm">{correctionSuggestion}</p><button className="hyos-secondary" onClick={() => setEditingText(correctionSuggestion)}>采用到编辑框</button><p className="mt-2 text-xs text-slate-500">请结合录音核对后保存，历史原文会保留。</p></div>}
+            <div className="hyos-modal-actions"><button className="hyos-secondary" onClick={() => setEditingSegment(null)} disabled={suggestingEdit || savingEdit}>取消</button><button className="hyos-primary" onClick={saveEdit} disabled={suggestingEdit || savingEdit || !editingText.trim()}>{savingEdit ? '正在保存…' : '保存校对'}</button></div>
           </div>
         </div>
       )}

@@ -1,0 +1,65 @@
+name: meetingbox-intel
+services:
+  asr:
+    image: quantatrisk/asrserve:1.0.5-cpu
+    init: true
+    restart: unless-stopped
+    ports: ["192.168.44.50:17003:8000"]
+    volumes: ["./models/asr:/app/models"]
+    environment:
+      R2T2_CPU_THREADS: "8"
+      OPENBLAS_NUM_THREADS: "8"
+      R2T2_MAX_SESSIONS: "1"
+      R2T2_CHUNK_SECONDS: "2"
+      HF_HUB_DISABLE_XET: "1"
+  llm:
+    image: ollama/ollama:0.11.4
+    restart: unless-stopped
+    ports: ["192.168.44.50:11434:11434"]
+    volumes: ["./models/ollama:/root/.ollama"]
+  bridge:
+    image: meetingbox-fast:audio-front
+    build:
+      context: ../../services/audio-front
+      dockerfile: Dockerfile
+    entrypoint: ["python", "-m", "uvicorn"]
+    command: ["meetingbox_bridge:app", "--host", "0.0.0.0", "--port", "8020"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:8020/healthz',timeout=5)); raise SystemExit(0 if r.get('ready') else 1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+    ports: ["192.168.44.50:8020:8020", "192.168.44.50:8050:8020", "192.168.44.50:8040:8020"]
+    volumes:
+      - ./meeting-data:/data
+      - ../../services/asrserve-bridge/bridge.py:/app/meetingbox_bridge.py:ro
+      - ../../services/asrserve-bridge/fast_stream.py:/app/fast_stream.py:ro
+      - ../../services/asrserve-bridge/overlap_live.py:/app/overlap_live.py:ro
+      - ../../services/asrserve-bridge/fire_red_stream.py:/app/fire_red_stream.py:ro
+      - ../../services/asrserve-bridge/transcript_cleanup.py:/app/transcript_cleanup.py:ro
+      - ../../services/audio-front/meeting_audio.py:/app/meeting_audio.py:ro
+      - ../../services/asrserve-bridge/speaker_turns.py:/app/speaker_turns.py:ro
+      - ../../services/asrserve-bridge/aligned_turns.py:/app/aligned_turns.py:ro
+      - ../../services/asrserve-bridge/word_speakers.py:/app/word_speakers.py:ro
+      - ../../services/qwen-openvino/summary_memory.py:/app/summary_memory.py:ro
+      - ./models/asr:/app/models:ro
+      - ./models/streaming/live:/fast-model:ro
+    environment:
+      MEETINGBOX_FAST_ASR: "1"
+      MEETINGBOX_OVERLAP_ENABLED: "1"
+      MEETINGBOX_OVERLAP_URL: http://192.168.44.1:8065
+      MEETINGBOX_PRIMARY_ASR: fire_red
+      MEETINGBOX_PUNC_URL: http://192.168.44.1:8063
+      MEETINGBOX_AUDIO_ENHANCE: agc
+      MEETINGBOX_REFINE_URL: http://192.168.44.1:8060
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      ASRSERVE_URL: http://asr:8000
+      MEETINGBOX_LLM_URL: http://192.168.44.1:8061/v1
+      MEETINGBOX_LLM_MODEL: qwen3-8b
+      MEETINGBOX_BRIDGE_DATA: /data
+      MEETINGBOX_CORRECTION_ENABLED: "1"
+
+

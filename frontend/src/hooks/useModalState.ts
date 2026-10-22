@@ -168,28 +168,6 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     };
   }, [showModal]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    let previousBackend = '';
-    void listen<{ active_backend: string; fallback_reason?: string | null }>('asr-backend-status', ({ payload }) => {
-      if (payload.active_backend === 'bossai-cpu' && previousBackend !== 'bossai-cpu') {
-        toast.warning('已切换到 CPU 语音识别', {
-          description: 'NPU 服务不可用或未通过检查，录音将继续保存，识别速度可能降低。',
-          duration: 6000,
-        });
-      }
-      previousBackend = payload.active_backend;
-    }).then((cleanup) => {
-      if (disposed) cleanup();
-      else unlisten = cleanup;
-    }).catch((error) => console.error('Failed to listen for ASR backend status:', error));
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
-
   // Listen for model download completion to auto-close modal
   useEffect(() => {
     const setupDownloadListeners = async () => {

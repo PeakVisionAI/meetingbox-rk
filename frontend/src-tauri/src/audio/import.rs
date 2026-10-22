@@ -264,11 +264,7 @@ pub async fn start_import<R: Runtime>(
     provider: Option<String>,
 ) -> Result<ImportResult> {
     // Acquire guard - ensures flag is cleared even on panic/early return
-    let _operation = super::transcription::rk_policy::AsrOperationGuard::acquire()
-        .map_err(|error| anyhow!(error))?;
     let _guard = ImportGuard::acquire().map_err(|e| anyhow!(e))?;
-
-    super::transcription::rk_policy::reset_session();
 
     // Reset cancellation flag
     IMPORT_CANCELLED.store(false, Ordering::SeqCst);

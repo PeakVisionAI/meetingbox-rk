@@ -60,3 +60,12 @@ mod tests {
         assert_eq!(PowerAction::Poweroff.systemctl_verb(), "poweroff");
     }
 }
+
+#[tauri::command]
+pub async fn close_application(app: tauri::AppHandle) -> Result<(), String> {
+    if crate::audio::recording_commands::is_recording().await {
+        return Err("会议录制中，请先结束并保存会议".to_string());
+    }
+    app.exit(0);
+    Ok(())
+}

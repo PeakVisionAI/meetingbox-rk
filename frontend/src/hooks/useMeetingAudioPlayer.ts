@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { readFile } from '@tauri-apps/plugin-fs';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
 function audioMimeType(path: string) {
   const extension = path.split('.').pop()?.toLowerCase();
@@ -37,13 +36,9 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
   }, []);
 
   const attachAudio = useCallback(async (path: string) => {
-    const bytes = await readFile(path);
-    const data = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer;
-    const url = URL.createObjectURL(new Blob([data], { type: audioMimeType(path) }));
-    objectUrlRef.current = url;
+    if (!meetingId) throw new Error('未选择会议');
+    const url = convertFileSrc(path);
+    objectUrlRef.current = null;
     const audio = new Audio(url);
     audio.preload = 'metadata';
     audio.addEventListener('loadedmetadata', () => {
@@ -73,7 +68,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
     setAudioPath(path);
     audio.load();
     return audio;
-  }, []);
+  }, [meetingId]);
 
   const ensureAudio = useCallback(async () => {
     if (audioRef.current) return audioRef.current;
@@ -99,10 +94,10 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
         if (!path) {
           throw new Error('未找到本次会议的录音文件');
         }
-        return attachAudio(path);
+        return await attachAudio(path);
       } catch (loadError) {
         console.error('Failed to prepare meeting audio:', loadError);
-        setError(loadError instanceof Error ? loadError.message : '无法准备本次会议的录音');
+        setError(loadError instanceof Error ? loadError.message : String(loadError));
         throw loadError;
       } finally {
         setIsLoading(false);
@@ -133,7 +128,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
       await audio.play();
     } catch (playError) {
       console.error('Failed to play meeting audio segment:', playError);
-      setError(playError instanceof Error ? playError.message : '录音播放失败');
+      setError(playError instanceof Error ? playError.message : String(playError));
     }
   }, [ensureAudio]);
 
@@ -145,7 +140,7 @@ export function useMeetingAudioPlayer(meetingId?: string | null) {
       else audio.pause();
     } catch (playError) {
       console.error('Failed to toggle meeting audio:', playError);
-      setError(playError instanceof Error ? playError.message : '录音播放失败');
+      setError(playError instanceof Error ? playError.message : String(playError));
     }
   }, [ensureAudio]);
 

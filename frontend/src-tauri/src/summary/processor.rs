@@ -249,8 +249,8 @@ fn build_final_report_system_prompt(
 5. 某节没有相关信息时，写「本节未提及」。
 6. 只输出填好的 Markdown 纪要。
 7. 不确定的内容请省略。
-8. 输出必须足够完整：保留主要议题的讨论过程、不同观点、明确决策、全部行动项、风险和遗留问题，不能只生成简短摘要。
-9. 源文本包含时间戳时，关键决策、行动项和依据必须保留对应的 MM:SS 时间戳。
+8. 内容长度应与有效讨论信息相称。完整保留真实议题、决策和行动项；短会议或功能测试用简短纪要，禁止重复凑篇幅。
+9. 输出正式会议纪要，不显示逐句时间戳，不附逐字原文。
 
 **各节填写说明：**
 {section_instructions}
@@ -271,8 +271,8 @@ fn build_final_report_system_prompt(
 5. If a section has no relevant info, write "None noted in this section."
 6. Output **only** the completed Markdown report.
 7. If unsure about something, omit it.
-8. Produce a complete report, retaining discussion context, differing views, explicit decisions, all action items, risks, and open questions instead of a brief abstract.
-9. When timestamps are present, preserve the relevant MM:SS timestamp for decisions, action items, and evidence.
+8. Match report length to substantive discussion. Preserve actual topics, decisions, and action items; keep short meetings or feature tests concise, with no repetition or invented detail.
+9. Produce formal meeting minutes without transcript timestamps or appended verbatim source.
 
 **SECTION-SPECIFIC INSTRUCTIONS:**
 {section_instructions}
@@ -489,7 +489,7 @@ pub async fn generate_meeting_summary(
             provider,
             LLMProvider::Ollama | LLMProvider::BuiltInAI | LLMProvider::CustomOpenAI
         );
-        if !context_limited || total_tokens < token_threshold {
+        if !context_limited || total_tokens < token_threshold || (text.contains("<incremental_summary>") && total_tokens < 7000) {
             info!(
                 "Using single-pass summarization (tokens: {}, threshold: {})",
                 total_tokens, token_threshold
