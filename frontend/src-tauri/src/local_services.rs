@@ -144,7 +144,7 @@ pub async fn ensure_local_services(app: tauri::AppHandle) -> Result<(), String> 
             let missing = probes
                 .iter()
                 .zip(states.iter())
-                .filter_map(|(probe, state)| (!**state).then_some(probe.name.as_str()))
+                .filter_map(|(probe, state)| (!*state).then_some(probe.name.as_str()))
                 .collect::<Vec<_>>()
                 .join("、");
             let message = format!("{missing}尚未就绪，请检查后台启动状态后重试");

@@ -31,7 +31,7 @@ pub fn set_hotwords(hotwords: Vec<(String, Option<String>)>) {
     }
 }
 
-fn configured_hotwords_json() -> String {
+pub(super) fn configured_hotwords_json() -> String {
     HOTWORDS
         .read()
         .ok()
@@ -47,7 +47,7 @@ fn configured_hotwords_json() -> String {
         .unwrap_or_else(|| "[]".to_string())
 }
 
-fn apply_hotword_corrections(mut text: String) -> String {
+pub(super) fn apply_hotword_corrections(mut text: String) -> String {
     if let Ok(configured) = HOTWORDS.read() {
         for (phrase, replacement) in configured.iter() {
             if let Some(replacement) = replacement.as_deref().filter(|value| !value.is_empty()) {
