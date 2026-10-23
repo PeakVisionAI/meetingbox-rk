@@ -2,7 +2,7 @@
   "kind": "rk",
   "label": "RK3588 + Intel 服务栈（功能对齐 Intel，模型为端侧 RKNN）",
   "asr": {
-    "endpoint": "http://127.0.0.1:8030",
+    "endpoint": "http://127.0.0.1:8130",
     "stream": true,
     "backend": "rk"
   },
@@ -13,7 +13,7 @@
   },
   "services": [
     { "name": "端侧语音识别", "url": "http://127.0.0.1:8020/healthz", "require_fast_realtime": false },
-    { "name": "实时转写桥接", "url": "http://127.0.0.1:8030/healthz", "require_fast_realtime": true },
+    { "name": "实时转写桥接", "url": "http://127.0.0.1:8130/healthz", "require_fast_realtime": true },
     { "name": "会议纪要", "url": "http://127.0.0.1:8040/health", "require_fast_realtime": false }
   ],
   "knowledge": {

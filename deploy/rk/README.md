@@ -20,7 +20,7 @@
 Windows / Linux 桌面端（同一份 Tauri 应用）
         │  MEETINGBOX_CONFIG=profile-rk-bridge.json
         │
-        ├── 127.0.0.1:8030  asrserve-bridge（Python）─┬─ /v1/asr/stream/{id}
+        ├── 127.0.0.1:8130  asrserve-bridge（Python）─┬─ /v1/asr/stream/{id}
         │                                             └─ rknn_stream → 8020
         ├── 127.0.0.1:8020  rk-asr（SenseVoice RKNN, NPU）
         ├── 127.0.0.1:8040  RK1828 纪要 sidecar（OpenAI 兼容）
@@ -56,7 +56,7 @@ sudo install -m644 services/asrserve-bridge/deploy/meetingbox-bridge.service /et
 sudo mkdir -p /var/lib/meetingbox/meeting-data
 sudo chown -R meetingbox:meetingbox /var/lib/meetingbox
 sudo systemctl enable --now meetingbox-bridge
-curl -s http://127.0.0.1:8030/healthz | jq '.ready, .backend'
+curl -s http://127.0.0.1:8130/healthz | jq '.ready, .backend'
 # 期望 true / "asrserve-rknn"
 
 # 4) 桌面应用切到 Intel 功能档案
@@ -220,7 +220,7 @@ mkdir -p /opt/meetingbox-rk/models
 #   Environment=MEETINGBOX_SPEAKER_MODEL=/opt/meetingbox-rk/models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
 #   Environment=MEETINGBOX_SPEAKER_THRESHOLD=0.62
 #   Environment=MEETINGBOX_SPEAKER_MAX=8
-curl -s localhost:8030/healthz | jq '.speakers'
+curl -s localhost:8130/healthz | jq '.speakers'
 ```
 
 验收：两人交替说话 2 分钟，逐字稿应出现 `发言人1/发言人2`，且同一人不跳号。

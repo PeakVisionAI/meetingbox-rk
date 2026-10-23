@@ -26,7 +26,7 @@ Environment=PYTHONUNBUFFERED=1
 # Environment=MEETINGBOX_SPEAKER_THRESHOLD=0.62
 # Environment=MEETINGBOX_PUNCT_MODEL=/opt/meetingbox-rk/models/punct-ct-transformer.int8.onnx
 
-ExecStart=/opt/meetingbox-rk/venv/bin/python -m uvicorn bridge:app --host 127.0.0.1 --port 8030 --log-level info
+ExecStart=/opt/meetingbox-rk/venv/bin/python -m uvicorn bridge:app --host 127.0.0.1 --port 8130 --log-level info
 Restart=on-failure
 RestartSec=3
 
