@@ -82,7 +82,7 @@
 # 端侧 ASR 可用
 curl -s localhost:8020/healthz | jq '.ready, .model'
 # 桥接可用且引擎是 RKNN
-curl -s localhost:8030/healthz | jq '.ready, .backend, .engine'
+curl -s localhost:8130/healthz | jq '.ready, .backend, .engine'
 # 一段 30s 音频的端到端时延与准确率
 ```
 

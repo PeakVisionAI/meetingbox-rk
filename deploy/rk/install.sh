@@ -88,8 +88,8 @@ log "health"
 if command -v curl >/dev/null 2>&1; then
   curl -fsS --max-time 5 http://127.0.0.1:8020/healthz 2>/dev/null \
     && echo || echo "rk-asr not answering on :8020 (models prepared? see below)"
-  curl -fsS --max-time 5 http://127.0.0.1:8030/healthz 2>/dev/null \
-    && echo || echo "bridge not answering on :8030 (journalctl -u meetingbox-bridge -n 50)"
+  curl -fsS --max-time 5 http://127.0.0.1:8130/healthz 2>/dev/null \
+    && echo || echo "bridge not answering on :8130 (journalctl -u meetingbox-bridge -n 50)"
 fi
 
 cat <<EOF

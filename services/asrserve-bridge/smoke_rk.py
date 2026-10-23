@@ -143,7 +143,7 @@ def stream(bridge, pcm, meeting_id):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--bridge", default="http://127.0.0.1:8030")
+    parser.add_argument("--bridge", default="http://127.0.0.1:8130")
     parser.add_argument("--asr", default="http://127.0.0.1:8020")
     parser.add_argument("--wav")
     parser.add_argument("--tone", type=float, help="generated sine seconds (plumbing only)")
